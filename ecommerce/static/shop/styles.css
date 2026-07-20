@@ -1998,18 +1998,210 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 }
 .cs-primary-action-label { line-height: 1; }
 
-/* Kiki multi-turn: interim answer bubbles */
-.cs-interim-answers {
-  display: flex; flex-direction: column; gap: 8px;
-  margin-bottom: 4px; align-self: stretch;
+/* Kiki multi-turn: interim answer paragraphs (NOT a card / NOT a bubble).
+   Just plain text between the progress card and the final answer.
+   These live INSIDE the cs-ai-bubble — no own background / border. */
+.cs-interim-paragraphs {
+  display: flex; flex-direction: column;
+  gap: 6px;
+  align-self: stretch;
+  padding: 0;
 }
-.cs-interim-answer {
-  padding: 10px 14px;
-  font-size: 13px;
-  opacity: 0.88;
-  border-left: 3px solid var(--color-primary);
+.cs-interim-paragraph {
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--color-text);
+}
+.cs-interim-paragraph p { margin: 0 0 6px; }
+.cs-interim-paragraph p:last-child { margin-bottom: 0; }
+
+/* Kiki-style final answer: plain text, NO white card. A subtle divider
+   above separates it from the interim narration paragraph. This lives
+   INSIDE the cs-ai-bubble — no own background. */
+.cs-kiki-answer {
+  align-self: stretch;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--color-divider);
+  margin-top: 8px;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--color-text);
+}
+.cs-kiki-answer p { margin: 0 0 8px; }
+.cs-kiki-answer p:last-child { margin-bottom: 0; }
+.cs-kiki-answer ul, .cs-kiki-answer ol { margin: 6px 0 10px; padding-left: 22px; }
+.cs-kiki-answer li { margin: 4px 0; }
+.cs-kiki-answer strong { font-weight: 600; color: var(--color-text); }
+.cs-kiki-answer code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  background: var(--color-surface-3);
+  padding: 1px 6px; border-radius: 4px;
+  color: var(--color-primary);
+}
+.cs-kiki-answer a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
+.cs-kiki-answer a:hover { color: var(--color-primary-hover); }
+.cs-kiki-answer table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12.5px;
+}
+.cs-kiki-answer th, .cs-kiki-answer td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-divider);
+}
+.cs-kiki-answer th { background: var(--color-surface-3); font-weight: 600; }
+.cs-kiki-answer pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--color-surface-3);
   border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12.5px;
+}
+.cs-kiki-answer pre code { background: transparent; border: none; padding: 0; color: inherit; }
+.cs-kiki-answer blockquote {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--color-primary);
   background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+  border-radius: 0 6px 6px 0;
+}
+.cs-kiki-answer hr { border: none; border-top: 1px solid var(--color-divider); margin: 10px 0; }
+
+/* ============================================================
+   THE Kiki AI-answer bubble — the signature Kiki interaction.
+   A single white rounded card that contains the progress steps,
+   the interim answer, the final answer, all in ONE surface. As
+   the agent streams content, the bubble height auto-grows — the
+   user sees the bubble physically stretching downward in real
+   time, the way 腾讯云智能助手 KiKi does it.
+
+   Action buttons (primary action + action cards) live OUTSIDE
+   the bubble, below it.
+   ============================================================ */
+.cs-ai-bubble {
+  background: var(--color-surface);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 6px -2px rgba(0,0,0,0.04);
+  word-break: break-word;
+  position: relative;
+  border: 1px solid rgba(0,0,0,0.04);
+  align-self: flex-start;
+  max-width: 100%;
+  /* Subtle smooth growth as content streams in (matches the Kiki
+     "card stretches" feel). */
+  transition: min-height 120ms ease-out;
+}
+/* Typing indicator dots at the bottom of the bubble while the agent
+   is still streaming. */
+.cs-ai-bubble-typing {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 0 0;
+}
+.cs-ai-bubble-typing span {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  animation: cs-typing-dot 1.2s ease-in-out infinite;
+}
+.cs-ai-bubble-typing span:nth-child(2) { animation-delay: 0.2s; }
+.cs-ai-bubble-typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes cs-typing-dot {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30%           { opacity: 1;   transform: translateY(-3px); }
+}
+
+/* ============================================================
+   Kiki-style progress card — INSIDE the ai-bubble. Each step is
+   one line: vertical-bar connector on the left, a small search
+   glyph (done) or arrow (running) icon, and the "正在XX" / "已XX"
+   phrase. Matches the 腾讯云智能助手 KiKi layout.
+   ============================================================ */
+.cs-kiki-progress {
+  align-self: stretch;
+  display: flex; flex-direction: column;
+  padding: 0 2px 6px;
+  margin-bottom: 0;
+}
+.cs-kiki-step {
+  position: relative;
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 0 4px 4px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+.cs-kiki-step:not(.cs-kiki-step-last)::before {
+  /* vertical connector between steps, anchored to the icon column */
+  content: '';
+  position: absolute;
+  left: 12px;          /* icon center */
+  top: 22px;
+  height: calc(100% - 12px);
+  width: 1px;
+  background: var(--color-divider);
+}
+.cs-kiki-step-icon {
+  flex-shrink: 0;
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  position: relative;
+  z-index: 1;
+  background: var(--color-surface);
+  border-radius: 50%;
+  color: var(--color-text-tertiary);
+}
+/* CSS-drawn magnifying glass for completed steps — matches the
+   search icon in the Kiki reference image. */
+.cs-kiki-search-glyph {
+  display: inline-block;
+  width: 11px; height: 11px;
+  border: 1.5px solid var(--color-text-tertiary);
+  border-radius: 50%;
+  position: relative;
+}
+.cs-kiki-search-glyph::after {
+  content: '';
+  position: absolute;
+  width: 5px; height: 1.5px;
+  background: var(--color-text-tertiary);
+  transform: rotate(45deg);
+  right: -4px; bottom: -1px;
+  border-radius: 1px;
+}
+/* Animated arrow for the currently-running (last) step — matches
+   the chevron on the Kiki reference image. */
+.cs-kiki-arrow {
+  display: inline-block;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--color-primary);
+  font-weight: 700;
+  animation: cs-kiki-blink 1.1s ease-in-out infinite;
+}
+@keyframes cs-kiki-blink {
+  0%, 100% { opacity: 1;   transform: translateX(0); }
+  50%      { opacity: 0.4; transform: translateX(2px); }
+}
+.cs-kiki-step-msg {
+  flex: 1; min-width: 0;
+  word-break: break-word;
+}
+.cs-kiki-step-running .cs-kiki-step-msg {
+  color: var(--color-text);
+  font-weight: 500;
+}
+.cs-kiki-step-done .cs-kiki-step-msg {
+  color: var(--color-text-secondary);
 }
 
 /* Kiki action cards: clickable buttons from [ACTION] blocks */

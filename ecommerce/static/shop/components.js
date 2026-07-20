@@ -684,9 +684,9 @@
               aiMsg.text = data.answer || '';
               aiMsg.trace_id = data.trace_id || null;
               aiMsg.typing = false;
-              // Auto-collapse the reasoning card once the answer is in,
-              // so the answer takes focus. User can re-expand to review.
-              aiMsg.reasoningExpanded = false;
+              // Kiki-style: keep the progress card always visible —
+              // do NOT auto-collapse on final. The user should still
+              // see "正在XX → 已XX" after the answer lands.
               // Backend may also attach action_cards to the final event
               // (batch). Merge with any already collected from streaming.
               if (Array.isArray(data.action_cards) && data.action_cards.length) {
@@ -961,90 +961,72 @@
                      step-by-step list tucked behind a chevron toggle.
                      ============================================================ -->
                 <template v-else>
-                  <!-- Thinking mini-card (Kiki-style "正在为操作做准备").
-                       Shown while the AI is typing. Collapsed by default
-                       once the answer arrives — the user can click the
-                       chevron to inspect the step list. -->
-                  <div
-                    v-if="m.typing && m.reasoning && m.reasoning.length === 0"
-                    class="cs-thinking-card"
-                  >
-                    <span class="cs-thinking-spinner"></span>
-                    <span class="cs-thinking-text">正在为操作做准备</span>
-                  </div>
-
-                  <!-- Reasoning toggle strip (Kiki-style, collapsed by
-                       default once the answer is in). -->
-                  <div
-                    v-if="m.reasoning && m.reasoning.length > 0"
-                    class="cs-reasoning-toggle-strip"
-                    @click="toggleReasoning(m)"
-                  >
-                    <span class="cs-reasoning-toggle-icon" :class="{ 'cs-spinner-sm': m.typing }">
-                      <span v-if="!m.typing">●</span>
-                    </span>
-                    <span class="cs-reasoning-toggle-label">
-                      {{ m.typing ? '正在为操作做准备' : '已查看思考过程' }}
-                    </span>
-                    <span v-if="m.reasoning && m.reasoning.length" class="cs-reasoning-toggle-meta">
-                      {{ m.reasoning.length }} 步
-                      <span v-if="m.summary && m.summary.total_latency_ms" class="cs-reasoning-latency">
-                        · {{ (m.summary.total_latency_ms / 1000).toFixed(1) }}s
-                      </span>
-                    </span>
-                    <span class="cs-reasoning-chevron">{{ m.reasoningExpanded ? '▾' : '▸' }}</span>
-                  </div>
-
-                  <!-- Expanded reasoning body -->
-                  <div v-if="m.reasoningExpanded && m.reasoning && m.reasoning.length" class="cs-reasoning-body-inline">
-                    <div v-for="(s, si) in m.reasoning" :key="s.step_id || si" class="cs-reasoning-step" :class="'cs-reasoning-step-' + s.status">
-                      <span class="cs-reasoning-step-icon">
-                        <span v-if="s.status === 'running'" class="cs-spinner"></span>
-                        <span v-else class="cs-check-glyph"></span>
-                      </span>
-                      <div class="cs-reasoning-step-main">
-                        <div class="cs-reasoning-step-row">
-                          <span class="cs-reasoning-step-msg">{{ s.friendly_message }}</span>
-                          <span v-if="s.latency_ms != null" class="cs-reasoning-step-latency">{{ s.latency_ms }}ms</span>
-                        </div>
-                        <div v-if="s.route_info && s.route_info.subagent_name" class="cs-reasoning-step-route">
-                          路由: {{ s.route_info.subagent_name }}
-                          <span v-if="s.route_info.route_reason"> · {{ s.route_info.route_reason }}</span>
-                        </div>
-                        <div v-if="s.tool_name" class="cs-reasoning-step-tool">
-                          <span class="cs-reasoning-tag cs-reasoning-tag-tool">tool</span>
-                          <span class="cs-reasoning-tool-name">{{ s.tool_name }}</span>
-                        </div>
+                  <!-- ONE white bubble (Kiki-mode "AI answer bubble") that
+                       GROWS as the agent streams content. The progress
+                       card, interim answer, and final answer all live
+                       INSIDE this single bubble. The bubble height
+                       auto-expands with each new step / interim / final
+                       chunk — the user sees the bubble physically
+                       stretching downward in real time. This is the
+                       signature Kiki interaction: nothing is pre-laid-
+                       out, everything streams into ONE expanding
+                       surface. -->
+                  <div class="cs-ai-bubble">
+                    <!-- Kiki-style reasoning: ALWAYS EXPANDED, no chevron
+                         toggle. Each step is a single line: vertical-bar
+                         connector on the left, search icon (done) / arrow
+                         (running) + the "正在XX" / "已XX" phrase. Mirrors
+                         the 腾讯云智能助手 KiKi progress card layout. -->
+                    <div
+                      v-if="m.reasoning && m.reasoning.length"
+                      class="cs-kiki-progress"
+                    >
+                      <div
+                        v-for="(s, si) in m.reasoning"
+                        :key="s.step_id || si"
+                        class="cs-kiki-step"
+                        :class="['cs-kiki-step-' + s.status, si === m.reasoning.length - 1 ? 'cs-kiki-step-last' : '']"
+                      >
+                        <span class="cs-kiki-step-icon">
+                          <span v-if="s.status === 'running'" class="cs-kiki-arrow">›</span>
+                          <span v-else class="cs-kiki-search-glyph"></span>
+                        </span>
+                        <span class="cs-kiki-step-msg">{{ s.friendly_message }}</span>
                       </div>
                     </div>
-                    <div v-if="m.summary" class="cs-reasoning-summary">
-                      <span>工具调用 {{ m.summary.num_tools_called || 0 }}</span>
-                      <span>·</span>
-                      <span>LLM 调用 {{ m.summary.num_llm_calls || 0 }}</span>
-                      <span>·</span>
-                      <span :class="m.summary.ok ? 'cs-reasoning-ok' : 'cs-reasoning-fail'">
-                        {{ m.summary.ok ? '成功' : '失败' }}
-                      </span>
+
+                    <!-- Kiki multi-turn: interim answer text (narration
+                         emitted before tool calls). Plain paragraph,
+                         NOT a card. Shown between the reasoning card
+                         and the final answer. -->
+                    <div
+                      v-if="m.interimAnswers && m.interimAnswers.length"
+                      class="cs-interim-paragraphs"
+                    >
+                      <div
+                        v-for="(ia, iai) in m.interimAnswers"
+                        :key="'interim-' + iai"
+                        class="cs-interim-paragraph"
+                        v-html="renderMarkdown(ia)"
+                      ></div>
+                    </div>
+
+                    <!-- The actual final answer — markdown inside the
+                         same bubble, with a subtle divider above so the
+                         interim/final boundary is visible. -->
+                    <div
+                      v-if="m.text"
+                      class="cs-kiki-answer"
+                      v-html="renderMarkdown(m.text)"
+                    ></div>
+
+                    <!-- Typing indicator (3 dots) shown at the very
+                         bottom of the bubble while waiting for the
+                         next step / final answer. -->
+                    <div v-if="m.typing && !m.text" class="cs-ai-bubble-typing">
+                      <span></span><span></span><span></span>
                     </div>
                   </div>
-
-                  <!-- Kiki multi-turn: interim answer bubbles (narration
-                       emitted before tool calls). Shown between the reasoning
-                       card and the final answer. -->
-                  <div
-                    v-if="m.interimAnswers && m.interimAnswers.length"
-                    class="cs-interim-answers"
-                  >
-                    <div
-                      v-for="(ia, iai) in m.interimAnswers"
-                      :key="'interim-' + iai"
-                      class="cs-knowledge-card cs-interim-answer"
-                      v-html="renderMarkdown(ia)"
-                    ></div>
-                  </div>
-
-                  <!-- The actual answer — white knowledge card. -->
-                  <div v-if="m.text" class="cs-knowledge-card" v-html="renderMarkdown(m.text)"></div>
 
                   <!-- Kiki-style: primary gradient action button ("帮我操作"). -->
                   <button

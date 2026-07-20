@@ -21,9 +21,11 @@ real time.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -42,6 +44,12 @@ from skills.commerce import current_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+# Kiki-mode UX tuning: how long the router step stays in the "running"
+# state before flipping to "done" with the sub-agent handoff. This is
+# deliberately > 0 so the user sees "正在判断" appear as its own line
+# before "已转交「XX」" replaces it. Tunable via env if needed.
+_ROUTER_STEP_HOLD_S: float = float(os.getenv("KIKI_ROUTER_HOLD_S", "0.4"))
 
 # --------------------------------------------------------------------------- #
 # Dynamic friendly-message generation (Kiki mode)
@@ -404,23 +412,72 @@ def chat_stream(
                         # recorded by the `messages` branch above (with
                         # real latency_ms) — calling `_consume` on them
                         # would double-record with latency=0.
+                        #
+                        # Kiki-mode streaming UX: the router node's
+                        # step_start and step_end used to fire in the
+                        # same millisecond, so the user saw three steps
+                        # appear "instantly". We now deliberately emit
+                        # step_start, sleep ~400ms, then emit step_end
+                        # + route. This gives the front-end time to
+                        # render the "正在判断" line in the running
+                        # state before it flips to "已转交" — matching
+                        # the Kiki reference where each step is visible
+                        # for a beat before the next one appears.
                         for node_name, payload in data.items():
                             if node_name == "router":
                                 _consume(payload, recorder)
-                                for ev_type, ev_data in _iter_events(
-                                    node_name, payload, ctx
-                                ):
-                                    logger.debug(
-                                        "[sse] yielding event=%s elapsed=%.2fs",
-                                        ev_type,
-                                        time.time() - started_at,
-                                    )
-                                    yield {
-                                        "event": ev_type,
-                                        "data": json.dumps(
-                                            ev_data, ensure_ascii=False
-                                        ),
-                                    }
+                                # Inline the router SSE emission so we
+                                # can interleave awaits. Yield
+                                # step_start, hold ~400ms, then yield
+                                # step_end + route.
+                                step_id = ctx.next_step_id()
+                                ctx.start_times[step_id] = time.time()
+                                ctx.num_llm += 1
+                                ctx.num_steps += 1
+                                yield {
+                                    "event": "step_start",
+                                    "data": json.dumps(
+                                        {
+                                            "step_id": step_id,
+                                            "step_type": "agent_think",
+                                            "friendly_message": "正在判断",
+                                            "node": node_name,
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                                await asyncio.sleep(_ROUTER_STEP_HOLD_S)
+                                latency_ms = round(
+                                    (time.time() - ctx.start_times.pop(step_id, time.time())) * 1000,
+                                    1,
+                                )
+                                yield {
+                                    "event": "step_end",
+                                    "data": json.dumps(
+                                        {
+                                            "step_id": step_id,
+                                            "preview": "",
+                                            "latency_ms": latency_ms,
+                                            "node": node_name,
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                                route = payload.get("route") or ""
+                                route_reason = payload.get("route_reason") or ""
+                                subagent_name = payload.get("subagent_name") or ""
+                                yield {
+                                    "event": "route",
+                                    "data": json.dumps(
+                                        {
+                                            "route": route,
+                                            "route_reason": route_reason,
+                                            "subagent_name": subagent_name,
+                                            "node": node_name,
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
                 state = await agent.aget_state(
                     config={"configurable": {"thread_id": thread_id}}
                 )
@@ -613,10 +670,10 @@ def _friendly_for_tool(name: str, args: dict[str, Any]) -> str:
 
 
 _SUBAGENT_FRIENDLY: dict[str, str] = {
-    "order_ops": "订单专员正在处理你的请求...",
-    "knowledge": "知识库专员正在检索答案...",
-    "escalation": "正在升级到人工客服...",
-    "router": "正在判断你的请求应该由哪位专员处理...",
+    "order_ops": "订单专员正在处理",
+    "knowledge": "知识库专员正在检索",
+    "escalation": "正在升级到人工客服",
+    "router": "正在判断",
 }
 
 
@@ -707,7 +764,7 @@ def _iter_events(
             {
                 "step_id": step_id,
                 "step_type": "agent_think",
-                "friendly_message": "正在判断你的请求应该由哪位专员处理...",
+                "friendly_message": "正在判断",
                 "node": node_name,
             },
         )
