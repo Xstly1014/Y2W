@@ -208,7 +208,10 @@ def cmd_eval(args: argparse.Namespace) -> None:
 
     collector = BadCaseCollector()
     for r in results:
-        collector.record_case(r)
+        # Use the classified path so each case gets auto-tagged with a
+        # category + deduped + assigned occurrence_count. See
+        # `optimization_logs/2026-07-20/issues-and-fixes.md` P1-5.
+        collector.record_case_classified(r, dedup=True)
 
     report_path = runner.write_report(results)
     passed = sum(r.passed for r in results)

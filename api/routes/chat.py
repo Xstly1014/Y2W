@@ -236,13 +236,16 @@ def chat_stream(
                                 "data": json.dumps(ev_data, ensure_ascii=False),
                             }
                     elif mode == "updates":
-                        # `data` is {node_name: payload}. Use it for trace
-                        # recording (via _consume) and for the router route
-                        # event. Step events for sub-agent nodes are already
-                        # emitted in real time by the messages branch above.
+                        # `data` is {node_name: payload}. We only need the
+                        # router node here for the `route` event + trace
+                        # recording. Sub-agent (order_ops / knowledge) and
+                        # escalation nodes' LLM/tool events are already
+                        # recorded by the `messages` branch above (with
+                        # real latency_ms) — calling `_consume` on them
+                        # would double-record with latency=0.
                         for node_name, payload in data.items():
-                            _consume(payload, recorder)
                             if node_name == "router":
+                                _consume(payload, recorder)
                                 for ev_type, ev_data in _iter_events(
                                     node_name, payload, ctx
                                 ):
@@ -424,7 +427,13 @@ _SUBAGENT_FRIENDLY: dict[str, str] = {
 
 
 class _StreamCtx:
-    """Mutable per-SSE-session counters and step-id timing."""
+    """Mutable per-SSE-session counters and step-id timing.
+
+    Also tracks the timestamp of the last processed message so we can
+    estimate LLM-call latency (delta between consecutive messages) and
+    stores tool_call args keyed by tool_call_id so the matching
+    ToolMessage can record them in the trace.
+    """
 
     def __init__(self) -> None:
         self.counter = 0
@@ -432,6 +441,15 @@ class _StreamCtx:
         # tool_call_id -> step_id: pairs an AIMessage.tool_calls entry with
         # its matching ToolMessage so we can emit a paired step_end.
         self.pending_tool_steps: dict[str, str] = {}
+        # tool_call_id -> args: captured from the AIMessage that requested
+        # the tool call, so the ToolMessage handler can record them in the
+        # trace (ToolMessage itself only carries the result, not the args).
+        self.tool_args: dict[str, dict[str, Any]] = {}
+        # Timestamp of the last message we fully processed. Used to estimate
+        # LLM-call latency as the delta between consecutive messages. The
+        # first message (user input) has no prior message, so we seed it
+        # with the SSE session start time.
+        self.last_msg_time: float = time.perf_counter()
         self.num_tools = 0
         self.num_llm = 0
         self.num_steps = 0
@@ -439,6 +457,10 @@ class _StreamCtx:
     def next_step_id(self) -> str:
         self.counter += 1
         return f"step-{self.counter}"
+
+    def mark_msg_done(self) -> None:
+        """Update last_msg_time to 'now' after fully processing a message."""
+        self.last_msg_time = time.perf_counter()
 
 
 def _iter_events(
@@ -518,9 +540,13 @@ def _iter_message_events(
     Router node messages are skipped here (the router's step + route
     event are emitted from the updates branch using _iter_events).
 
-    Trace recording is intentionally NOT done here: it's handled by
-    `_consume` in the updates branch so the trace keeps a single
-    consistent recording path.
+    Trace recording is done HERE (not in `_consume`) so we can pass
+    real latency_ms computed from `time.perf_counter()` deltas:
+      - LLM call latency ≈ delta between the current AIMessage and the
+        previously-processed message (ToolMessage or user input).
+      - Tool call latency = delta between the ToolMessage and the
+        step_start time recorded when the matching AIMessage's tool_call
+        was first seen (via chunk or complete AIMessage).
 
     With `subgraphs=True`, langgraph streams LLM tokens as
     `AIMessageChunk` objects. We handle these specially:
@@ -563,6 +589,7 @@ def _iter_message_events(
                 ctx.start_times[step_id] = time.time()
                 if tc_id:
                     ctx.pending_tool_steps[tc_id] = step_id
+                    ctx.tool_args[tc_id] = dict(tc.get("args", {}) or {})
                 ctx.num_tools += 1
                 ctx.num_steps += 1
                 yield (
@@ -592,6 +619,17 @@ def _iter_message_events(
         tool_calls = getattr(msg, "tool_calls", None) or []
         content = getattr(msg, "content", "") or ""
 
+        # Record this LLM call with real latency. Latency is approximated
+        # as the delta between the current message arrival and the
+        # previously-processed message (ToolMessage or the SSE session
+        # start for the first LLM call in a turn).
+        llm_latency_ms = round(
+            (time.perf_counter() - ctx.last_msg_time) * 1000, 1
+        )
+        recorder.record_llm_call(msg, latency_ms=max(0.0, llm_latency_ms))
+        ctx.num_llm += 1
+        ctx.mark_msg_done()
+
         if tool_calls:
             # Complete AIMessage with tool_calls. If we already emitted
             # step_start from a chunk, skip (avoid duplicates). Otherwise
@@ -607,6 +645,7 @@ def _iter_message_events(
                 ctx.start_times[step_id] = time.time()
                 if tc_id:
                     ctx.pending_tool_steps[tc_id] = step_id
+                    ctx.tool_args[tc_id] = dict(tc.get("args", {}) or {})
                 ctx.num_tools += 1
                 ctx.num_steps += 1
                 yield (
@@ -628,7 +667,6 @@ def _iter_message_events(
             # where the LLM provider doesn't stream tokens (no chunks).
             step_id = ctx.next_step_id()
             ctx.start_times[step_id] = time.time()
-            ctx.num_llm += 1
             ctx.num_steps += 1
             yield (
                 "step_start",
@@ -672,15 +710,24 @@ def _iter_message_events(
                 },
             )
         content = getattr(msg, "content", "")
-        latency_ms = round(
+        # Real tool latency: delta between ToolMessage arrival and the
+        # step_start time recorded when the tool_call was first seen.
+        tool_latency_ms = round(
             (time.time() - ctx.start_times.pop(step_id, time.time())) * 1000, 1
         )
+        tool_name = getattr(msg, "name", "unknown") or "unknown"
+        tool_args = ctx.tool_args.pop(tc_id, {}) if tc_id else {}
+        # Record the tool call in the trace with real latency + args.
+        recorder.record_tool_call(
+            tool_name, tool_args, content, latency_ms=max(0.0, tool_latency_ms)
+        )
+        ctx.mark_msg_done()
         yield (
             "step_end",
             {
                 "step_id": step_id,
                 "preview": str(content)[:200],
-                "latency_ms": latency_ms,
+                "latency_ms": tool_latency_ms,
                 "node": node_name,
             },
         )

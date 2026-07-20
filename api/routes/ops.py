@@ -13,7 +13,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from api.deps import get_collector
 from api.schemas import DashboardStats, FeedbackRequest, TraceQuery, validate_safe_id
 from config import settings
-from observability.tracing import _traces_dir
+from observability.tracing import _index_path, _traces_dir
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,21 @@ feedback_router = APIRouter(prefix="/api/feedback", tags=["feedback"])
 
 @feedback_router.post("")
 def feedback(req: FeedbackRequest) -> dict[str, Any]:
-    """Record a thumbs-up/down. y → good case, n → bad case (with trace_id)."""
+    """Record a thumbs-up/down. y → good case, n → bad case (with trace_id).
+
+    Uses `record_interaction_classified` so every feedback is auto-tagged
+    with a category (rule-based classifier) + deduplicated against existing
+    records (exact-match) + assigned occurrence_count / first_seen /
+    last_seen. This closes the "built but never wired in" gap for the
+    flywheel's classifier / deduper / prioritizer modules — see
+    `optimization_logs/2026-07-20/issues-and-fixes.md` P1-5.
+
+    Near-dup (embedding cosine) and LLM-based classification are disabled
+    by default (no embeddings/llm passed to the collector) to keep the
+    feedback endpoint fast (<10ms). Run `deduplicate_existing` offline
+    for near-dup merging, and the LLM classifier can be enabled via
+    `BadCaseCollector(llm=...)` when latency budget allows.
+    """
     collector = get_collector()
     metadata: dict[str, Any] = {"source": "web"}
     if req.trace_id:
@@ -35,18 +49,22 @@ def feedback(req: FeedbackRequest) -> dict[str, Any]:
         metadata["thread_id"] = req.thread_id
     if req.tenant_id:
         metadata["tenant_id"] = req.tenant_id
-    collector.record_interaction(
+    stored = collector.record_interaction_classified(
         user_input=req.user_input,
         prediction=req.prediction,
         passed=req.passed,
         expected=req.expected,
         score=req.score,
         metadata=metadata,
+        dedup=True,
     )
     return {
         "ok": True,
         "recorded_as": "good" if req.passed else "bad",
         "stats": collector.stats(),
+        "category": stored.get("metadata", {}).get("category"),
+        "occurrence_count": stored.get("occurrence_count", 1),
+        "is_duplicate": stored.get("occurrence_count", 1) > 1,
     }
 
 
@@ -100,7 +118,15 @@ def list_traces(
     tenant_id: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=200),
 ) -> dict[str, Any]:
-    """List traces, optionally filtered by thread_id. Sorted by latency desc."""
+    """List traces, optionally filtered by thread_id. Sorted by latency desc.
+
+    Reads from the trace index (`_index.jsonl`) instead of scanning every
+    per-thread trace file — keeps the endpoint <200ms at 10K+ traces.
+    See `optimization_logs/2026-07-20/issues-and-fixes.md` P1-1.
+
+    Falls back to the legacy full-scan path if the index doesn't exist
+    yet (first trace after deploy / migration).
+    """
     # Validate IDs before they hit the filesystem — a crafted thread_id like
     # ``../../etc/passwd`` would otherwise escape the traces directory.
     try:
@@ -108,24 +134,45 @@ def list_traces(
         validate_safe_id(tenant_id, "tenant_id")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    traces_dir = _traces_dir()
-    files: list[Path] = []
-    if thread_id:
-        f = traces_dir / f"{thread_id}.jsonl"
-        if f.exists():
-            files.append(f)
-    else:
-        files = sorted(traces_dir.glob("*.jsonl"))
+
     all_traces: list[dict[str, Any]] = []
-    for f in files:
-        for line in f.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                all_traces.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+    index_file = _index_path()
+
+    if index_file.exists():
+        # Fast path: read the compact index (one summary line per trace).
+        # 10K traces ≈ 1MB, parses in ~50ms.
+        with index_file.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    all_traces.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    else:
+        # Legacy fallback: scan all trace files (slow at scale, but correct).
+        traces_dir = _traces_dir()
+        files: list[Path] = []
+        if thread_id:
+            f = traces_dir / f"{thread_id}.jsonl"
+            if f.exists():
+                files.append(f)
+        else:
+            files = sorted(traces_dir.glob("*.jsonl"))
+        for f in files:
+            for line in f.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    all_traces.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+    # Filter by thread_id (index doesn't honor thread_id filter on read).
+    if thread_id:
+        all_traces = [t for t in all_traces if t.get("thread_id") == thread_id]
     if tenant_id:
         all_traces = [t for t in all_traces if _matches_tenant(t, tenant_id)]
     # Defensive: total_latency_ms may be None or missing — coerce to 0 to

@@ -228,27 +228,28 @@ class BadCaseCollector:
         record_id: str,
         new_timestamp: str,
     ) -> dict[str, Any]:
-        """Increment `occurrence_count` on an existing record by rewriting the store.
+        """Increment `occurrence_count` on an existing record atomically.
 
-        `JsonlStore` is append-only, so we read all records, mutate the
-        matching one, then `clear()` + re-`append()` everything. Cross-
-        process safety is NOT guaranteed (same as `JsonlStore` itself).
+        Uses `JsonlStore.read_modify_write` so the read → mutate → rewrite
+        cycle holds the cross-process file lock for the entire operation.
+        Without this, two concurrent workers could both read the original
+        count, both increment to `n+1`, and rewrite — losing one increment.
 
-        Returns the updated record dict.
+        Returns the updated record dict (or {} if not found).
         """
-        records = list(store.iter_records())
-        updated: dict[str, Any] | None = None
-        for rec in records:
-            if rec.get("id") == record_id:
-                rec["occurrence_count"] = rec.get("occurrence_count", 1) + 1
-                rec["last_seen"] = new_timestamp
-                updated = rec
-                break
-        store.clear()
-        for rec in records:
-            store.append(rec)
-        # `updated` is the same dict reference we just re-appended.
-        return dict(updated) if updated else {}
+        updated_holder: list[dict[str, Any]] = []
+
+        def mutate(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            for rec in records:
+                if rec.get("id") == record_id:
+                    rec["occurrence_count"] = rec.get("occurrence_count", 1) + 1
+                    rec["last_seen"] = new_timestamp
+                    updated_holder.append(dict(rec))
+                    break
+            return records
+
+        store.read_modify_write(mutate)
+        return updated_holder[0] if updated_holder else {}
 
     # ------------------------------------------------------------------ #
     # New: query / analyze
@@ -309,6 +310,11 @@ class BadCaseCollector:
         Merging preserves the earlier `first_seen` and the later `last_seen`
         so the audit trail spans the full window of occurrences.
 
+        When `dry_run=False`, the rewrite uses `read_modify_write` so the
+        cross-process file lock is held for the whole operation (prevents
+        a concurrent writer from appending a new record that gets lost
+        when we rewrite the file).
+
         Args:
             dry_run: When True, only reports what would be merged; the
                 bad store is left untouched. When False, the store is
@@ -361,9 +367,11 @@ class BadCaseCollector:
                 merged.append(rec)
 
         if not dry_run:
-            self.bad_store.clear()
-            for rec in merged:
-                self.bad_store.append(rec)
+            # Atomically rewrite: hold the cross-process lock so concurrent
+            # appenders can't slip a new record in between our read and write.
+            def _replace(_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                return merged
+            self.bad_store.read_modify_write(_replace)
 
         return {
             "exact_merged": exact_merged,

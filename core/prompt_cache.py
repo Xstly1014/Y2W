@@ -227,3 +227,50 @@ def cached_invoke(
     ).content
     cache.set(model, temperature, system, user, response)
     return response
+
+
+async def cached_ainvoke(
+    llm: Any,
+    system: str,
+    user: str,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    cache: PromptCache | None = None,
+) -> str:
+    """Async version of `cached_invoke` — uses `await llm.ainvoke(...)`.
+
+    Cache lookup/store is synchronous (LRU dict + optional disk append),
+    so the cache itself doesn't await — only the LLM miss path awaits.
+
+    Used by the router node (`core/multi_agent.py`) so the router's LLM
+    calls go through the cache when `LLM_PROMPT_CACHE_ENABLED=true`.
+    See `optimization_logs/2026-07-20/issues-and-fixes.md` P1-6.
+    """
+    cache = cache or get_prompt_cache()
+    model = model or getattr(llm, "model_name", "") or getattr(llm, "model", "")
+    temperature = (
+        temperature
+        if temperature is not None
+        else float(getattr(llm, "temperature", 0.0) or 0.0)
+    )
+    # Skip cache for non-deterministic calls.
+    if temperature > 0:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        resp = await llm.ainvoke(
+            [SystemMessage(content=system), HumanMessage(content=user)]
+        )
+        return resp.content
+    cached = cache.get(model, temperature, system, user)
+    if cached is not None:
+        logger.debug("prompt cache hit (async): model=%s user_hash=%s", model, _hash(user))
+        return cached
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    resp = await llm.ainvoke(
+        [SystemMessage(content=system), HumanMessage(content=user)]
+    )
+    response = resp.content
+    cache.set(model, temperature, system, user, response)
+    return response

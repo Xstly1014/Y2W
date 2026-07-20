@@ -25,6 +25,8 @@ from rag.embeddings import build_embeddings
 from rag.indexer import Indexer
 from rag.rag_tool import build_rag_tool
 from skills.commerce import CommerceSkills
+from skills.code_review import CodeReviewSkill
+from skills.data_analysis import DataAnalysisSkill
 from skills.summarize import SummarizeSkill
 from skills.translator import TranslatorSkill
 from tools import get_builtin_tools
@@ -126,12 +128,15 @@ def get_agent_for_tenant(tenant_id: str) -> Any:
         # Knowledge sub-agent: RAG retriever + summarize skill + translator
         # (cross-border commerce serves multilingual buyers) + long-term
         # memory tools (save_memory / recall_memory) so the agent can persist
-        # user facts/preferences across sessions.
+        # user facts/preferences across sessions + code review / data analysis
+        # skills (extended capabilities for power users who paste code or CSV).
         memory_tools = build_memory_tools(get_long_term_memory())
         knowledge_tools: list[BaseTool] = [
             rag_tool,
             *SummarizeSkill(llm).get_tools(),
             *TranslatorSkill(llm).get_tools(),
+            *CodeReviewSkill(llm).get_tools(),
+            *DataAnalysisSkill().get_tools(),
             *memory_tools,
         ]
         agent = build_multi_agent(

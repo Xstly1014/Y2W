@@ -90,11 +90,16 @@ class Settings(BaseSettings):
         ),
     )
     long_term_memory_extract_facts: bool = Field(
-        default=False,
+        default=True,
         alias="LTM_EXTRACT_FACTS",
         description=(
-            "When True, remember_extracted() uses LLM to extract facts. "
-            "When False, remember_extracted() falls back to plain remember()."
+            "When True, remember_extracted() uses LLM to extract facts "
+            "(subject/predicate/object triples) for precise recall. "
+            "When False, falls back to plain remember() (raw text only). "
+            "Default True since the save_memory tool is called infrequently "
+            "(only when the agent decides to persist a user fact), so the "
+            "extra LLM call is acceptable. See "
+            "`optimization_logs/2026-07-20/issues-and-fixes.md` P2-5."
         ),
     )
 
@@ -174,6 +179,24 @@ class Settings(BaseSettings):
     llm_batch_max_workers: int = Field(
         default=4, alias="LLM_BATCH_MAX_WORKERS",
         description="Max parallel workers for batch_invoke.",
+    )
+
+    # ----- LangSmith / LangFuse observability export -----
+    # When langchain_api_key is set AND langchain_tracing_v2=true, LangChain
+    # automatically uploads every LLM/tool call to LangSmith (no code change
+    # needed — just `pip install langsmith` and set these env vars).
+    # See `optimization_logs/2026-07-20/issues-and-fixes.md` P1-3.
+    langchain_api_key: str = Field(default="", alias="LANGCHAIN_API_KEY")
+    langchain_tracing_v2: bool = Field(
+        default=False, alias="LANGCHAIN_TRACING_V2",
+        description="Enable LangChain auto-tracing (uploads to LangSmith).",
+    )
+    langchain_project: str = Field(
+        default="0719agent", alias="LANGCHAIN_PROJECT",
+        description="LangSmith project name (groups traces in the UI).",
+    )
+    langchain_endpoint: str = Field(
+        default="https://api.smith.langchain.com", alias="LANGCHAIN_ENDPOINT",
     )
 
     def ensure_dirs(self) -> None:

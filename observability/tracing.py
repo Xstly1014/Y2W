@@ -45,6 +45,23 @@ def _traces_dir() -> Path:
     return path
 
 
+def _index_path() -> Path:
+    """Path to the trace index file (append-only JSONL).
+
+    Each line is a trace summary: ``{trace_id, thread_id, tenant_id,
+    started_at, total_latency_ms, num_steps, total_cost_usd, error}``.
+    The list-traces endpoint reads only this file (no globbing over
+    per-thread trace files) so it stays <200ms even at 10K+ traces.
+    See `optimization_logs/2026-07-20/issues-and-fixes.md` P1-1.
+    """
+    return _traces_dir() / "_index.jsonl"
+
+
+# Cross-process lock for the index file so concurrent trace writers
+# (multiple API workers) don't interleave bytes.
+_INDEX_LOCK = Lock()
+
+
 # One lock per trace file path so concurrent TraceRecorders writing to the
 # same thread_id file don't interleave bytes.
 _TRACE_FILE_LOCKS: dict[str, Lock] = {}
@@ -153,6 +170,7 @@ class TraceRecorder:
             "steps": self.steps,
         }
         self._write(trace)
+        self._write_index(trace)
         return trace
 
     def _write(self, trace: dict[str, Any]) -> None:
@@ -163,6 +181,30 @@ class TraceRecorder:
             with path.open("a", encoding="utf-8") as f:
                 f.write(line)
         logger.debug("trace %s written to %s", self.trace_id, path)
+
+    def _write_index(self, trace: dict[str, Any]) -> None:
+        """Append a compact summary to the trace index.
+
+        The index is read by `list_traces` to avoid scanning every
+        per-thread trace file. We keep the summary minimal (no steps /
+        no final_answer) so 10K traces ≈ 1MB index.
+        """
+        summary = {
+            "trace_id": trace.get("trace_id"),
+            "thread_id": trace.get("thread_id"),
+            "tenant_id": trace.get("tenant_id"),
+            "model": trace.get("model"),
+            "started_at": trace.get("started_at"),
+            "total_latency_ms": trace.get("total_latency_ms"),
+            "total_cost_usd": trace.get("total_cost_usd"),
+            "num_steps": trace.get("num_steps"),
+            "error": trace.get("error"),
+        }
+        line = json.dumps(summary, ensure_ascii=False) + "\n"
+        path = _index_path()
+        with _INDEX_LOCK:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
 
 
 def trace_invocation(

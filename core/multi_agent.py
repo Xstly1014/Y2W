@@ -35,6 +35,8 @@ from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -165,20 +167,65 @@ class MultiAgentState(TypedDict, total=False):
 # Node: router (LLM-based intent classification)
 # --------------------------------------------------------------------------- #
 def _build_router(llm: BaseChatModel):
-    """Return a router node that classifies intent via prompt + JSON parse.
+    """Return an async router node that classifies intent via prompt + JSON parse.
 
     We intentionally avoid `llm.with_structured_output()` because some
     providers (e.g. certain ZhipuAI / MiniMax models) reject the
     `response_format` parameter it sets. Plain prompt + JSON parse is
     portable and degrades gracefully on malformed output.
+
+    The node is `async def` and uses `await llm.ainvoke(...)` so it does
+    NOT block the FastAPI event loop when invoked via `agent.astream()`.
+    A synchronous `llm.invoke(...)` inside a `def` node would serialize
+    all concurrent SSE streams in the same process (each router call
+    blocks 1-3s). See `optimization_logs/2026-07-20/issues-and-fixes.md`
+    P0-2 for the full rationale.
     """
 
-    def router_node(state: MultiAgentState) -> dict[str, Any]:
+    async def router_node(state: MultiAgentState) -> dict[str, Any]:
         messages = state.get("messages", [])
-        # Pass full history so the LLM can detect "same order 3rd refund"
-        # patterns, but route based on the latest user turn.
+        # Extract the last user message for cache keying. The router still
+        # passes full history to the LLM (so it can detect "same order 3rd
+        # refund" patterns), but the cache key uses only the last user turn
+        # so repeated questions hit the cache regardless of history length.
+        last_user = ""
+        for msg in reversed(messages):
+            msg_type = getattr(msg, "type", "") or msg.__class__.__name__.lower()
+            if msg_type in {"user", "human", "humanmessage"}:
+                last_user = getattr(msg, "content", "") or ""
+                break
+
+        # Prompt cache lookup (only when enabled + temperature == 0).
+        use_cache = (
+            getattr(settings, "llm_prompt_cache_enabled", False)
+            and float(getattr(llm, "temperature", 0.0) or 0.0) == 0.0
+        )
+        if use_cache:
+            from core.prompt_cache import get_prompt_cache
+
+            cache = get_prompt_cache()
+            model_name = (
+                getattr(llm, "model_name", "") or getattr(llm, "model", "") or ""
+            )
+            cached = cache.get(model_name, 0.0, ROUTER_PROMPT, last_user)
+            if cached is not None:
+                logger.debug(
+                    "router prompt cache hit: model=%s user=%r",
+                    model_name, last_user[:60],
+                )
+                route, route_reason = _parse_router_json(cached)
+                subagent_name = SUBAGENT_DISPLAY_NAMES.get(route, route)
+                return {
+                    "route": route,
+                    "route_reason": route_reason,
+                    "subagent_name": subagent_name,
+                }
+
+        # Cache miss (or cache disabled) — call the LLM with full history.
         try:
-            ai_msg = llm.invoke([SystemMessage(content=ROUTER_PROMPT), *messages])
+            ai_msg = await llm.ainvoke(
+                [SystemMessage(content=ROUTER_PROMPT), *messages]
+            )
             text = getattr(ai_msg, "content", "") or ""
             route, route_reason = _parse_router_json(text)
         except Exception as exc:  # noqa: BLE001
@@ -191,6 +238,12 @@ def _build_router(llm: BaseChatModel):
                 ROUTE_KNOWLEDGE,
                 f"路由器调用失败，默认走知识库专员：{exc}",
             )
+            text = ""
+
+        # Store the LLM response in the cache for future hits.
+        if use_cache and text:
+            cache.set(model_name, 0.0, ROUTER_PROMPT, last_user, text)
+
         subagent_name = SUBAGENT_DISPLAY_NAMES.get(route, route)
         logger.info(
             "router decision: route=%s subagent=%s reason=%s",

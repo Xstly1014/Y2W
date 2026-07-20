@@ -41,7 +41,35 @@ async def lifespan(app: FastAPI):
     scripts/run_all.py's health check waits for `/api/health`, which only
     returns 200 after this warmup completes, so the user never sees a
     half-ready service.
+
+    Also enables LangSmith tracing if configured — LangChain reads these
+    env vars at import time, so we set them before any LLM call. See
+    `optimization_logs/2026-07-20/issues-and-fixes.md` P1-3.
     """
+    # Enable LangSmith auto-tracing if configured. LangChain's tracer reads
+    # these env vars on first LLM call, so setting them here (before
+    # get_agent_for_tenant builds the LLM) is sufficient.
+    if settings.langchain_tracing_v2 and settings.langchain_api_key:
+        import os
+
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+        os.environ["LANGCHAIN_API_KEY"] = settings.langchain_api_key
+        os.environ["LANGCHAIN_PROJECT"] = settings.langchain_project
+        os.environ["LANGCHAIN_ENDPOINT"] = settings.langchain_endpoint
+        logger.info(
+            "LangSmith tracing enabled (project=%s, endpoint=%s)",
+            settings.langchain_project, settings.langchain_endpoint,
+        )
+        # Verify the langsmith package is importable so we fail fast with a
+        # helpful message instead of a cryptic ImportError on first chat.
+        try:
+            import langsmith  # type: ignore[import-not-found]  # noqa: F401
+        except ImportError:
+            logger.warning(
+                "LANGCHAIN_TRACING_V2=true but `langsmith` package is not "
+                "installed. Run `pip install langsmith` to enable LangSmith export."
+            )
+
     default_tenant = settings.default_tenant_id
     logger.info("warming up agent for default tenant %r ...", default_tenant)
     try:

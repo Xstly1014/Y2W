@@ -43,6 +43,51 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return inter / union if union else 0.0
 
 
+def _llm_judge_pair(
+    llm: Any,
+    prompt: str,
+    chosen: str,
+    rejected: str,
+) -> bool:
+    """LLM judge: does `chosen` actually answer `prompt`?
+
+    Used by `build_dpo_enhanced` to filter out topically-similar but
+    semantically-wrong DPO pairs (e.g. "calculate 1+1" chosen for
+    "refund order 1001" prompt — both contain numbers, so embedding
+    cosine is high, but the chosen doesn't answer the prompt).
+
+    Returns True if the LLM says "yes" (chosen answers the prompt),
+    False otherwise. On any LLM error, returns True (don't filter —
+    let the pair through, a false-negative filter is worse than a
+    false-positive pass).
+
+    Uses a fixed SystemMessage + HumanMessage pattern (prompt-injection
+    safe — the user content never enters the system prompt).
+    """
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    system = (
+        "You are a DPO pair quality judge. Given a prompt, a chosen "
+        "response, and a rejected response, determine if the chosen "
+        "response ACTUALLY ANSWERS the prompt (not just topically "
+        "similar). Reply with ONLY 'yes' or 'no' — nothing else."
+    )
+    user = (
+        f"Prompt: {prompt[:500]}\n\n"
+        f"Chosen: {chosen[:500]}\n\n"
+        f"Rejected: {rejected[:500]}\n\n"
+        "Does the chosen response actually answer the prompt? yes/no"
+    )
+    try:
+        resp = llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
+        text = (getattr(resp, "content", "") or "").strip().lower()
+        # Accept "yes", "yes.", "yes\n" etc. Reject everything else.
+        return text.startswith("yes")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("LLM judge failed (allowing pair through): %s", exc)
+        return True
+
+
 def _cosine(a: Any, b: Any) -> float:
     """Cosine similarity between two numeric vectors (lists or 1-D arrays).
 
@@ -203,8 +248,9 @@ class PostTrainingPipeline:
         *,
         min_similarity: float = 0.5,
         embeddings: Any | None = None,
+        llm: Any | None = None,
     ) -> Path:
-        """Like `build_dpo` but with stricter matching.
+        """Like `build_dpo` but with stricter matching + optional LLM judge.
 
         Improvements over `build_dpo`:
         - Higher similarity threshold (default 0.5, vs. 0.3 in `build_dpo`)
@@ -213,6 +259,11 @@ class PostTrainingPipeline:
           method); otherwise falls back to Jaccard on token sets
         - Skips pairs where chosen == rejected (exact match after strip)
         - Skips pairs where the bad-side prediction (rejected) is empty
+        - When `llm` is provided, an LLM judge validates that the chosen
+          response actually answers the prompt (not just topically similar).
+          This catches the "calculator answers refund question" mismatch
+          case that token/embedding similarity can't detect. See
+          `optimization_logs/2026-07-20/issues-and-fixes.md` P1-4.
 
         Writes to `dpo.jsonl` (overwrites the legacy artefact). Returns
         the path to the written file.
@@ -234,6 +285,8 @@ class PostTrainingPipeline:
 
         out = self.output_dir / "dpo.jsonl"
         n = 0
+        judged = 0
+        judge_passed = 0
         with out.open("w", encoding="utf-8") as f:
             for bad in self.collector.bad_store.iter_records():
                 bad_input = bad.get("user_input", "") or ""
@@ -276,6 +329,20 @@ class PostTrainingPipeline:
                 if chosen.strip() == rejected.strip():
                     continue
 
+                # LLM judge: verify the chosen response actually answers
+                # the prompt. Embedding/token similarity can match "refund
+                # order 1001" to "calculate 1+1" if both contain numbers,
+                # but an LLM judge catches the semantic mismatch.
+                if llm is not None:
+                    judged += 1
+                    if not _llm_judge_pair(llm, bad_input, chosen, rejected):
+                        logger.debug(
+                            "LLM judge rejected DPO pair (sim=%.2f, prompt=%r)",
+                            best_sim, bad_input[:80],
+                        )
+                        continue
+                    judge_passed += 1
+
                 f.write(
                     json.dumps(
                         {
@@ -290,7 +357,11 @@ class PostTrainingPipeline:
                 )
                 n += 1
         logger.info(
-            "Wrote %d enhanced DPO pairs to %s (min_sim=%.2f, embeddings=%s)",
-            n, out, min_similarity, "yes" if embeddings is not None else "no",
+            "Wrote %d enhanced DPO pairs to %s (min_sim=%.2f, embeddings=%s, "
+            "llm_judge=%s, judged=%d, passed=%d)",
+            n, out, min_similarity,
+            "yes" if embeddings is not None else "no",
+            "yes" if llm is not None else "no",
+            judged, judge_passed,
         )
         return out

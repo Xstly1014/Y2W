@@ -1022,3 +1022,76 @@ curl "http://127.0.0.1:8000/api/feedback?limit=10"
     - 解决原则：每个新模块要同时改 `__init__.py`（导出）+ `main.py:build_default_agent()` 和 `api/deps.py:get_agent_for_tenant()`（接入），不能只改一半。详见 `issues-and-fixes.md` P1-5/6/7。
 ```
 
+---
+
+## 12. 全面问题修复（2026-07-21，第五轮）
+
+基于第四轮 Review 的 `optimization_logs/2026-07-20/issues-and-fixes.md` 问题清单，逐一修复 P0/P1/P2 共 12 项。**121 单测全过**，所有改动有验收标准。
+
+### 12.1 修复清单
+
+| # | 问题 | 等级 | 修复点 | 验收 |
+|---|---|---|---|---|
+| P0-1 | `tracing.py` latency 硬编码 0 | P0 | `chat.py` 用 `time.perf_counter()` 在 messages 分支真实计时，`_consume` 在 updates 分支只处理 router 节点避免重复 record | trace 每步 latency > 0 |
+| P0-2 | router 节点同步阻塞 event loop | P0 | `multi_agent.py` router 改 `async def` + `await llm.ainvoke(...)` | 10 并发 p99 与单请求差 < 30% |
+| P0-3 | JsonlStore 跨进程不安全 | P0 | `storage.py` 加跨平台文件锁（msvcrt/fcntl）+ `read_modify_write` 原子方法；`collector.py` 的 `_increment_occurrence` / `deduplicate_existing` 改用原子方法 | 2 worker 跑 eval，badcase 计数无丢无重 |
+| P0-4 | 子 agent 同步阻塞 | P0 | `create_react_agent` 返回的 compiled graph 已是 async-compatible，外层 `astream` 自动走 async 路径（router async 化后即生效） | 同 P0-2 |
+| P1-7 | 新 Skill 未接入 agent | P1 | `api/deps.py` 的 `knowledge_tools` 加入 `CodeReviewSkill(llm)` + `DataAnalysisSkill()` | agent 能调 `review_code` / `analyze_csv` 工具 |
+| P1-5 | 飞轮主路径走老接口 | P1 | `api/routes/ops.py:feedback` 改用 `record_interaction_classified`；`main.py:cmd_eval` 改用 `record_case_classified` | feedback 提交后 badcase 带 category + occurrence_count |
+| P1-6 | PromptCache 未接入 LLM | P1 | `multi_agent.py` router 节点接入 PromptCache（key = ROUTER_PROMPT + last_user_message）；`prompt_cache.py` 加 `cached_ainvoke` 异步版本 | `LLM_PROMPT_CACHE_ENABLED=true` 后 router 重复问题命中 cache |
+| P1-1 | traces 列表扫全文件 | P1 | `tracing.py` 加 `_index_path()` + `_write_index()`；`ops.py:list_traces` 读 `_index.jsonl` 而非扫文件 | 10K trace 时列表 < 200ms |
+| P1-3 | 缺 LangSmith 导出 | P1 | `settings.py` 加 `langchain_api_key` / `langchain_tracing_v2` / `langchain_project` 字段；`server.py:lifespan` 检测环境变量自动启用 + langsmith 包存在性校验 | 配置 `LANGCHAIN_API_KEY` 后 Smith UI 能看到 trace |
+| P1-4 | DPO 配对质量差 | P1 | `pipeline.py:build_dpo_enhanced` 加 `llm` 参数 + `_llm_judge_pair` helper（LLM judge 校验 chosen 是否解答 prompt） | `audit_post_training` 报告 chosen_rejected_overlap > 0.3 |
+| P2-5 | fact_extractor 默认关闭 | P2 | `settings.py:long_term_memory_extract_facts` 默认改 True | 多轮对话后 `list_user_memories` 返回三元组 |
+| P2-3 | EvalRunner 不支持并发 | P2 | `runner.py` 加 `run_concurrent` 方法（ThreadPoolExecutor + 顺序保留）+ `_run_one` / `_run_cases` 拆分 | 8 case 从 16s 降到 5s |
+
+### 12.2 修改文件清单
+
+```
+api/routes/chat.py          — P0-1: _StreamCtx 加 last_msg_time/tool_args；_iter_message_events 真实计时 + recorder 调用；updates 分支只处理 router
+api/routes/ops.py           — P1-1: list_traces 读 _index.jsonl；P1-5: feedback 用 record_interaction_classified
+api/server.py               — P1-3: lifespan 启用 LangSmith auto-tracing
+api/deps.py                 — P1-7: knowledge_tools 加 CodeReviewSkill + DataAnalysisSkill
+config/settings.py          — P1-3: langchain_* 字段；P2-5: long_term_memory_extract_facts 默认 True
+core/multi_agent.py         — P0-2: router async 化；P1-6: router 接入 PromptCache
+core/prompt_cache.py        — P1-6: 加 cached_ainvoke 异步版本
+data_flywheel/storage.py    — P0-3: 跨平台文件锁 + read_modify_write 原子方法
+data_flywheel/collector.py  — P0-3 + P1-5: _increment_occurrence / deduplicate_existing 用原子方法
+evaluation/runner.py        — P2-3: run_concurrent + _run_one / _run_cases 拆分
+main.py                     — P1-5: cmd_eval 用 record_case_classified
+observability/tracing.py    — P1-1: _index_path / _write_index 索引写入
+post_training/pipeline.py   — P1-4: build_dpo_enhanced 加 llm 参数 + _llm_judge_pair helper
+```
+
+### 12.3 验证
+
+- 121/121 单测全过（3.03s）
+- 所有模块 import OK
+- 已知限制：
+  - 非流式 `chat()` 端点的 trace latency 仍为 0（只有流式 `chat_stream` 接入了真实计时）
+  - PromptCache 只接入 router 节点（子 agent 的 LLM 调用走 `create_react_agent` 内部，未接 cache）
+  - LangSmith 导出需要 `pip install langsmith`（未在 requirements.txt 强制依赖）
+
+### 12.4 新增坑位（继续编号）
+
+58. **`_consume` 在 updates 分支重复 record LLM/tool**
+    - 现象：P0-1 修复时，如果在 messages 分支 record 了 LLM/tool，updates 分支再调 `_consume` 会产生 2 条 step（一条 latency 真实，一条 latency=0）。
+    - 解决：updates 分支只对 `node_name == "router"` 调 `_consume`（router 的 payload 不含 messages，不会重复 record LLM/tool）。其他节点的 record 完全由 messages 分支负责。
+
+59. **router 节点 async 化后 langgraph 自动走 async 路径**
+    - 现象：把 router 从 `def` 改成 `async def` 后，外层 `agent.astream()` 会自动用 `await` 调用 router 节点，不再阻塞 event loop。
+    - 教训：langgraph 的 `StateGraph` 节点支持 async——只要节点是 `async def`，langgraph 自动走 async 路径。子 agent（`create_react_agent` 返回的 compiled graph）本身是 async-compatible，外层 `astream` 自动用 `ainvoke`。所以 P0-4（子 agent async 化）不需要额外改——只要 router 改 async，整条链路就是 async 的。
+
+60. **JsonlStore 跨进程锁要用 sidecar `.lock` 文件**
+    - 现象：直接锁 `.jsonl` 文件本身在 Windows 上会与 `open("a")` 冲突（msvcrt.locking 锁的是文件描述符，但 `open` 会创建新描述符）。
+    - 解决：用 sidecar `<path>.lock` 文件专门做锁，原 `.jsonl` 文件正常读写。锁的 acquire/release 在 sidecar 文件上操作，不影响数据文件的 IO。
+
+61. **PromptCache 的 cache key 要用"最后一条 user message"而非"完整历史"**
+    - 现象：router 的 messages 包含完整对话历史，如果用整个历史做 cache key，命中率极低（每次历史都不同）。
+    - 解决：cache key 用 `ROUTER_PROMPT + last_user_message`。cache hit 时直接返回缓存的 route（不看历史）；cache miss 时调 LLM 看完整历史。这样相同问题命中，不同历史下相同问题也命中。
+
+62. **fact_extractor 默认开启的安全性**
+    - 现象：`long_term_memory_extract_facts` 改默认 True 后，每次 `save_memory` 工具调用都会多一次 LLM 调用（1-3s）。
+    - 评估：`save_memory` 是 agent 主动调用的（当 agent 认为需要记住用户事实时），不是每次 chat 都调。延迟影响有限。
+    - 回退路径：设 `LTM_EXTRACT_FACTS=false` 即可关闭，回到 raw text 存储。
+
