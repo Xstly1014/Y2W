@@ -89,6 +89,51 @@ def main() -> int:
     api_proc = start(api_cmd, "api")
     shop_proc = None if skip_ecommerce else start(shop_cmd, "shop")
 
+    procs = [(mock_proc, "mock"), (api_proc, "api")]
+    if shop_proc is not None:
+        procs.append((shop_proc, "shop"))
+
+    # Signal handlers + atexit must be wired up BEFORE we start streaming
+    # stdout, so Ctrl+C during the (slow) health-check phase still
+    # terminates every child.
+    _is_signalled = [False]
+
+    def cleanup(*_):
+        for p, t in procs:
+            try:
+                p.terminate()
+                # Give each process a moment to flush logs / close sockets.
+                try:
+                    p.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait(timeout=2)
+                log.info("[%s] terminated", t)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[%s] termination error: %s", t, exc)
+        # Don't call sys.exit() inside a signal handler — let main() return.
+        os._exit(0)
+
+    def _handle_signal(signum, _frame):
+        _is_signalled[0] = True
+        cleanup(signum, _frame)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+    atexit.register(cleanup, None, None)
+
+    # Start streaming subprocess stdout IMMEDIATELY. If we wait until after
+    # the health checks (as the previous version did), the api process
+    # emits dozens of HuggingFace HEAD requests + sentence-transformers
+    # logs during BGE warmup, the ~64KB PIPE buffer fills up, and the
+    # child's stdout writes block — stalling warmup for ~80s and causing
+    # wait_for to time out at 90s even though the server itself is healthy.
+    # Streaming concurrently keeps the PIPE drained and lets the user see
+    # live warmup progress.
+    threads = [threading.Thread(target=stream_output, args=(p, t), daemon=True) for p, t in procs]
+    for th in threads:
+        th.start()
+
     # Give all a moment to bind.
     time.sleep(1.5)
 
@@ -119,44 +164,6 @@ def main() -> int:
     print("    - Run end-to-end demo:    python scripts/demo.py")
     print("=" * 60 + "\n")
 
-    # Stream all subprocess outputs concurrently. We do it in a simple
-    # round-robin: read one line from each, repeat. Good enough for a
-    # dev launcher.
-    procs = [(mock_proc, "mock"), (api_proc, "api")]
-    if shop_proc is not None:
-        procs.append((shop_proc, "shop"))
-
-    def cleanup(*_):
-        for p, t in procs:
-            try:
-                p.terminate()
-                # Give each process a moment to flush logs / close sockets.
-                try:
-                    p.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    p.kill()
-                    p.wait(timeout=2)
-                log.info("[%s] terminated", t)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("[%s] termination error: %s", t, exc)
-        # Don't call sys.exit() inside a signal handler — let main() return.
-        os._exit(0 if not any(_is_signalled) else 0)
-
-    _is_signalled = [False]
-
-    def _handle_signal(signum, _frame):
-        _is_signalled[0] = True
-        cleanup(signum, _frame)
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-    # Also register with atexit so Ctrl+C from inside a child still cleans up.
-    atexit.register(cleanup, None, None)
-
-    # Simple line-by-line mux.
-    threads = [threading.Thread(target=stream_output, args=(p, t), daemon=True) for p, t in procs]
-    for th in threads:
-        th.start()
     try:
         for p, _ in procs:
             p.wait()
