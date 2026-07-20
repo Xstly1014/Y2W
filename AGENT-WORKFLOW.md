@@ -536,6 +536,21 @@ Copy-Item .env.example .env   # 然后编辑填入 API key
     - 解决：schema 加 `model_config = ConfigDict(from_attributes=True)`，Pydantic 自动转换。
     - 教训：**ORM → schema 转换永远开 `from_attributes`**，否则要手写 `model_validate` 适配器。
 
+44. **Vue 3 响应式 `ref()` 包装 File 对象后，FormData.append() 报 "parameter 2 is not of type 'Blob'"**
+    - 现象：客服面板上传文件时控制台报 `TypeError: Failed to execute 'append' on 'FormData': parameter 2 is not of type 'Blob'`，文件无法发送。
+    - 根因：Vue 3 的 `ref()` 会把存入的对象包成 `Proxy`。`Proxy` 不是 `Blob` 子类，浏览器原生 `FormData.append()` 严格校验类型，直接拒绝。
+    - 解决（双保险）：
+      1. `components.js` 附件对象用 `markRaw({...})` 标记为非响应式：`const att = markRaw({ id, name, size, type, file, preview });` —— 这是 Vue 3 官方推荐的 canonical fix。
+      2. `api.js` 的 `chatWithAgentStreamAttachments` 调用前先从 wrapper 里剥出原始 `File`：`const fileObj = (att && att.file) ? att.file : att;` —— 即使上游某天又包了 Proxy，这里也兜得住。
+    - 教训：**任何要交给浏览器原生 API（`FormData` / `FileReader` / `postMessage` / `structuredClone`）的对象都不能放进 `ref()`，必须用 `markRaw` 或 `shallowRef`。**
+
+45. **客服面板底部"白底"问题（参照 Kiki 设计）**
+    - 现象：底部输入区（输入框 + 附件 + 免责声明）连成一片白，跟白色 panel 背景糊在一起，没有"悬浮卡片"感。
+    - 根因：`.cs-panel` 和 `.cs-input-box` 都是 `var(--color-surface)`（纯白），两者紧贴造成视觉粘连。
+    - 解决：把 `.cs-panel` 底部的输入区包一层 `<div class="cs-input-area">`，给它一个浅灰背景 `var(--color-bg)`；白色 `.cs-input-box` 保留阴影和圆角，视觉上"浮"在浅灰底上 —— 正是腾讯云 Kiki 的卡片布局。
+    - 同步把模式选择器从"两个独立按钮 (`cs-mode-switch`)"合并成"单个芯片 + 下拉菜单 (`cs-mode-chip` + `cs-mode-menu`)"，保持 Kiki 风格紧凑。代码位置：`ecommerce/static/shop/components.js` 模板里的 `cs-input-tools-row`；样式在 `styles.css` 中 `.cs-mode-chip-wrap / .cs-mode-chip / .cs-mode-menu` 段。
+    - 教训：**悬浮卡片必须有"底"才能浮** —— 卡片本身留白+阴影不够，父容器必须有对比色（哪怕只是 #f5f5f7 vs #ffffff 的微小差异）才能让用户看到"浮起来"。
+
 ---
 
 ## 8. 上下文压缩恢复清单

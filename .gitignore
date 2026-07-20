@@ -36,3 +36,6 @@ htmlcov/
 # ===== Personal docs =====
 resume/
 *.pdf
+
+# ===== Misc test artifacts =====
+_shop_index.html

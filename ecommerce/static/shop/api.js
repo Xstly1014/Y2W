@@ -25,6 +25,88 @@
     return sid;
   }
 
+  // ----- Internal: SSE parsing & streaming ------------------------
+  // parseSseBlock — turn one SSE event block (potentially multi-line)
+  // into { event, data }. Tolerates both LF and CRLF line endings and
+  // unknown event names default to 'message'.
+  function parseSseBlock(block) {
+    let event = 'message';
+    const dataLines = [];
+    const lines = block.split('\n');
+    for (const raw of lines) {
+      const line = raw.replace(/\r$/, '');
+      if (!line || line.startsWith(':')) continue;
+      const idx = line.indexOf(':');
+      const field = idx < 0 ? line : line.slice(0, idx);
+      let val = idx < 0 ? '' : line.slice(idx + 1);
+      if (val.startsWith(' ')) val = val.slice(1);
+      if (field === 'event') event = val || 'message';
+      else if (field === 'data') dataLines.push(val);
+    }
+    if (dataLines.length === 0) return null;
+    const dataStr = dataLines.join('\n');
+    let data = dataStr;
+    try { data = JSON.parse(dataStr); } catch (_) { /* keep raw string */ }
+    return { event, data };
+  }
+  // streamAgentChat — shared POST+SSE driver used by both the JSON
+  // and the multipart variants. The same CRLF-normalizing SSE
+  // parsing is reused so both code paths behave identically.
+  function streamAgentChat({ url, headers, body, onEvent }) {
+    const controller = new AbortController();
+    (async () => {
+      let resp;
+      try {
+        resp = await fetch(url, { method: 'POST', headers, body, signal: controller.signal });
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        onEvent('error', { message: 'network error: ' + e.message, trace_id: null });
+        return;
+      }
+      if (!resp.ok) {
+        let detail = `HTTP ${resp.status}`;
+        try { detail = (await resp.json()).detail || detail; } catch (_) { /* ignore */ }
+        onEvent('error', { message: detail, trace_id: null });
+        return;
+      }
+      if (!resp.body) {
+        onEvent('error', { message: 'no response body', trace_id: null });
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          // Normalize CRLF -> LF (sse-starlette emits CRLF, and the SSE
+          // spec uses blank line as event separator). Without this, a
+          // server emitting "\r\n\r\n" would never match "\n\n" and all
+          // events would pile up in buf unprocessed — manifesting as
+          // "stuck thinking" in the UI.
+          buf = buf.replace(/\r\n/g, '\n');
+          let sep;
+          while ((sep = buf.indexOf('\n\n')) >= 0) {
+            const block = buf.slice(0, sep);
+            buf = buf.slice(sep + 2);
+            const parsed = parseSseBlock(block);
+            if (parsed) onEvent(parsed.event, parsed.data);
+          }
+        }
+        if (buf.trim()) {
+          const parsed = parseSseBlock(buf);
+          if (parsed) onEvent(parsed.event, parsed.data);
+        }
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        onEvent('error', { message: 'stream read error: ' + e.message, trace_id: null });
+      }
+    })();
+    return controller;
+  }
+
   async function request(path, options = {}) {
     const url = API_BASE + path;
     const headers = {
@@ -159,76 +241,73 @@
      * because EventSource only supports GET and the agent's /stream endpoint
      * is POST (it needs a JSON body with the user message).
      */
+    /**
+     * Streams a customer-service agent response via Server-Sent Events.
+     *
+     * Internally shared with chatWithAgentStreamAttachments so the
+     * multipart (with-files) variant can reuse the same SSE parsing.
+     * Returns an AbortController so the caller can cancel an in-flight
+     * stream (e.g. when the user closes the chat panel).
+     *
+     * NOTE: We deliberately use fetch + getReader() instead of EventSource
+     * because EventSource only supports GET and the agent's /stream endpoint
+     * is POST (it needs a JSON body with the user message).
+     */
     chatWithAgentStream: (message, thread_id, context, onEvent) => {
-      const controller = new AbortController();
-      const url = API_BASE + '/customer-service/chat/stream';
-      const headers = {
-        'Content-Type': 'application/json',
-        'X-User-Id': getUserId(),
-        'Accept': 'text/event-stream',
-      };
       const body = JSON.stringify({ message, thread_id, context });
-
-      (async () => {
-        let resp;
-        try {
-          resp = await fetch(url, {
-            method: 'POST',
-            headers,
-            body,
-            signal: controller.signal,
-          });
-        } catch (e) {
-          if (e.name === 'AbortError') return;
-          onEvent('error', { message: 'network error: ' + e.message, trace_id: null });
-          return;
-        }
-        if (!resp.ok) {
-          let detail = `HTTP ${resp.status}`;
-          try { detail = (await resp.json()).detail || detail; } catch (_) { /* ignore */ }
-          onEvent('error', { message: detail, trace_id: null });
-          return;
-        }
-        if (!resp.body) {
-          onEvent('error', { message: 'no response body', trace_id: null });
-          return;
-        }
-
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buf = '';
-        try {
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            // Normalize CRLF -> LF (sse-starlette emits CRLF, and the SSE
-            // spec uses blank line as event separator). Without this, a
-            // server emitting "\r\n\r\n" would never match "\n\n" and all
-            // events would pile up in buf unprocessed — manifesting as
-            // "stuck thinking" in the UI.
-            buf = buf.replace(/\r\n/g, '\n');
-            // SSE events are separated by a blank line (\n\n).
-            let sep;
-            while ((sep = buf.indexOf('\n\n')) >= 0) {
-              const block = buf.slice(0, sep);
-              buf = buf.slice(sep + 2);
-              const parsed = parseSseBlock(block);
-              if (parsed) onEvent(parsed.event, parsed.data);
-            }
-          }
-          // flush any trailing event without a blank-line terminator
-          if (buf.trim()) {
-            const parsed = parseSseBlock(buf);
-            if (parsed) onEvent(parsed.event, parsed.data);
-          }
-        } catch (e) {
-          if (e.name === 'AbortError') return;
-          onEvent('error', { message: 'stream read error: ' + e.message, trace_id: null });
-        }
-      })();
-
-      return controller;
+      return streamAgentChat({
+        url: API_BASE + '/customer-service/chat/stream',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': getUserId(),
+          'Accept': 'text/event-stream',
+        },
+        body,
+        onEvent,
+      });
+    },
+    /**
+     * Variant of chatWithAgentStream that uploads files alongside the
+     * prompt. Builds a multipart/form-data body:
+     *   - message: the user prompt
+     *   - thread_id: conversation thread id
+     *   - context: serialized JSON (mode, current_page, etc.)
+     *   - files: one form entry per File object
+     *
+     * The backend /customer-service/chat/stream endpoint is expected to
+     * accept the same multipart body and ingest files (forwarded to the
+     * agent as inline references). If the backend returns 404 / 405
+     * (older builds), the caller should fall back to the JSON variant.
+     */
+    chatWithAgentStreamAttachments: (message, thread_id, context, files, onEvent) => {
+      const fd = new FormData();
+      fd.append('message', message || '');
+      fd.append('thread_id', thread_id || '');
+      fd.append('context', JSON.stringify(context || {}));
+      for (let i = 0; i < files.length; i++) {
+        const att = files[i];
+        // `att` is the wrapper {id, name, size, type, file, preview} the
+        // widget stores. FormData.append() needs the actual File (which
+        // IS a Blob) — passing the wrapper object makes the browser throw
+        // "parameter 2 is not of type 'Blob'". We support both shapes so
+        // legacy callers that pass raw Files keep working.
+        const fileObj = (att && att.file) ? att.file : att;
+        const fileName = (att && att.name) ? att.name : (fileObj && fileObj.name) || 'file';
+        // Use the field name "files" (matches FastAPI's File parameter
+        // when declared as `files: List[UploadFile] = File(...)`).
+        fd.append('files', fileObj, fileName);
+      }
+      return streamAgentChat({
+        url: API_BASE + '/customer-service/chat/stream',
+        headers: {
+          // Do NOT set Content-Type — the browser sets it with the
+          // correct multipart boundary.
+          'X-User-Id': getUserId(),
+          'Accept': 'text/event-stream',
+        },
+        body: fd,
+        onEvent,
+      });
     },
     checkAgentHealth: () => request('/customer-service/health'),
     sendAgentFeedback: (trace_id, feedback) =>
