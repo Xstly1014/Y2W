@@ -51,6 +51,38 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 # before "已转交「XX」" replaces it. Tunable via env if needed.
 _ROUTER_STEP_HOLD_S: float = float(os.getenv("KIKI_ROUTER_HOLD_S", "0.4"))
 
+# Kiki-mode UX tuning: minimum visible duration for ANY step (router,
+# sub-agent think, tool call, etc.) measured from step_start to
+# step_end. If the actual work is faster, we artificially sleep the
+# delta so the user perceives every step as "thinking for a beat" —
+# instead of seeing several steps flash in < 50ms followed by a long
+# blank waiting for one big LLM call. Kiki reference shows each step
+# holding roughly a second. Tunable via env.
+_MIN_STEP_DURATION_S: float = float(os.getenv("KIKI_MIN_STEP_DURATION_S", "1.0"))
+
+# Kiki-mode UX tuning: total visible budget for the whole stream.
+# Each step's hold = min(MIN_STEP, remaining_budget / steps_left) so
+# a long LLM call doesn't get preceded by a bunch of gratuitous holds
+# (which would inflate total wall-clock). When the budget is fresh,
+# fast steps hold up to MIN_STEP; once we've spent most of the budget
+# (e.g. on a slow LLM), later fast steps get the floor instead. This
+# is what the user asked for as "把耗时的 LLM 延迟匀到前面的不耗时
+# 操作上" — we don't actually pre-pay, but we make the per-step hold
+# proportional to how much budget is left, so a 5s LLM doesn't
+# surprise the user after several 50ms steps.
+_TARGET_TOTAL_S: float = float(os.getenv("KIKI_TARGET_TOTAL_S", "10.0"))
+
+# Estimated total step count for a typical Kiki pipeline (router +
+# LLM + tool call + LLM + final). Used to compute steps_left in the
+# per-step budget. Slight over-estimate is fine — the budget will
+# simply have leftover slack we don't spend.
+_TYPICAL_STEPS: int = int(os.getenv("KIKI_TYPICAL_STEPS", "6"))
+
+# Hard lower bound on per-step hold. Even if the budget calculation
+# would say "hold for 0.05s", we floor at this value so a step
+# doesn't appear and disappear in a single frame.
+_MIN_HOLD_FLOOR_S: float = float(os.getenv("KIKI_MIN_HOLD_FLOOR_S", "0.4"))
+
 # --------------------------------------------------------------------------- #
 # Dynamic friendly-message generation (Kiki mode)
 # --------------------------------------------------------------------------- #
@@ -395,6 +427,67 @@ def chat_stream(
                         for ev_type, ev_data in _iter_message_events(
                             msg, node_name, ctx, recorder
                         ):
+                            # Kiki-mode pacing v2: each step's hold is
+                            # min(MIN_STEP, remaining_budget / steps_left)
+                            # so a long LLM call doesn't get preceded
+                            # by a bunch of gratuitous holds (which
+                            # would inflate total wall-clock). The
+                            # intuition: when the budget is fresh,
+                            # fast steps hold up to MIN_STEP; once
+                            # we've spent most of the budget (e.g.
+                            # on a slow LLM), later fast steps get
+                            # the floor instead. This is what the
+                            # user asked for as "把耗时的 LLM 延迟
+                            # 匀到前面的不耗时操作上" — we make the
+                            # per-step hold proportional to the
+                            # budget left, so a 5s LLM doesn't
+                            # surprise the user after several 50ms
+                            # steps.
+                            if ev_type == "step_end":
+                                step_id = ev_data.get("step_id")
+                                if step_id:
+                                    started = ctx.start_times.get(step_id)
+                                    if started is not None:
+                                        elapsed = time.time() - started
+                                        stream_elapsed = (
+                                            time.time() - ctx.stream_started_at
+                                        )
+                                        remaining_budget = max(
+                                            0.0,
+                                            _TARGET_TOTAL_S - stream_elapsed,
+                                        )
+                                        steps_left = max(
+                                            1, _TYPICAL_STEPS - ctx.steps_completed
+                                        )
+                                        per_step_budget = remaining_budget / steps_left
+                                        # Hold the step for at most the
+                                        # per-step cap; if the budget
+                                        # is already tight, hold the
+                                        # floor instead. Never below
+                                        # the floor (or the step
+                                        # vanishes in a single frame).
+                                        target_hold = min(
+                                            _MIN_STEP_DURATION_S, per_step_budget
+                                        )
+                                        target_hold = max(
+                                            _MIN_HOLD_FLOOR_S, target_hold
+                                        )
+                                        remaining = target_hold - elapsed
+                                        if remaining > 0:
+                                            await asyncio.sleep(remaining)
+                                        # Recompute latency_ms and pop
+                                        # start_times so the value on
+                                        # the wire matches the visible
+                                        # duration.
+                                        new_latency_ms = round(
+                                            (time.time() - started) * 1000, 1
+                                        )
+                                        ev_data = {
+                                            **ev_data,
+                                            "latency_ms": new_latency_ms,
+                                        }
+                                        ctx.start_times.pop(step_id, None)
+                                        ctx.steps_completed += 1
                             logger.debug(
                                 "[sse] yielding event=%s elapsed=%.2fs",
                                 ev_type,
@@ -426,10 +519,13 @@ def chat_stream(
                         for node_name, payload in data.items():
                             if node_name == "router":
                                 _consume(payload, recorder)
-                                # Inline the router SSE emission so we
-                                # can interleave awaits. Yield
-                                # step_start, hold ~400ms, then yield
-                                # step_end + route.
+                                # Register the router step_start so the
+                                # front-end can render the "正在判断"
+                                # line immediately, then hold the step
+                                # visible for at least
+                                # _MIN_STEP_DURATION_S (0.6s) so the
+                                # user perceives a real beat of
+                                # "thinking" before it flips to done.
                                 step_id = ctx.next_step_id()
                                 ctx.start_times[step_id] = time.time()
                                 ctx.num_llm += 1
@@ -446,7 +542,29 @@ def chat_stream(
                                         ensure_ascii=False,
                                     ),
                                 }
-                                await asyncio.sleep(_ROUTER_STEP_HOLD_S)
+                                # Same per-step budget logic as the
+                                # messages branch: hold = min(MIN, budget/
+                                # steps_left), floored at MIN_HOLD_FLOOR
+                                # so the step never vanishes in a single
+                                # frame. The router step is the FIRST
+                                # step in the stream, so budget is
+                                # always at peak and the hold is the
+                                # full MIN_STEP (~1s) — exactly the
+                                # "正在判断" beat the user wants to see.
+                                stream_elapsed = time.time() - ctx.stream_started_at
+                                remaining_budget = max(
+                                    0.0, _TARGET_TOTAL_S - stream_elapsed
+                                )
+                                steps_left = max(
+                                    1, _TYPICAL_STEPS - ctx.steps_completed
+                                )
+                                per_step_budget = remaining_budget / steps_left
+                                target_hold = min(
+                                    _MIN_STEP_DURATION_S, per_step_budget
+                                )
+                                target_hold = max(_MIN_HOLD_FLOOR_S, target_hold)
+                                router_hold = max(_ROUTER_STEP_HOLD_S, target_hold)
+                                await asyncio.sleep(router_hold)
                                 latency_ms = round(
                                     (time.time() - ctx.start_times.pop(step_id, time.time())) * 1000,
                                     1,
@@ -463,6 +581,10 @@ def chat_stream(
                                         ensure_ascii=False,
                                     ),
                                 }
+                                # Router step counts toward steps_completed
+                                # so the per-step budget tapers correctly
+                                # for the sub-agent steps that follow.
+                                ctx.steps_completed += 1
                                 route = payload.get("route") or ""
                                 route_reason = payload.get("route_reason") or ""
                                 subagent_name = payload.get("subagent_name") or ""
@@ -725,6 +847,17 @@ class _StreamCtx:
         self.num_tools = 0
         self.num_llm = 0
         self.num_steps = 0
+        # Kiki-mode pacing v2: track the SSE session start so each
+        # step's hold can be computed as a fraction of the remaining
+        # total budget (instead of a flat per-step floor). This lets
+        # us hold fast early steps longer (when the budget is fresh)
+        # and shorter later (when a slow LLM has eaten the budget),
+        # so the user never sees several 50ms steps followed by a
+        # single 5s LLM wait — every step is visibly "thinking".
+        self.stream_started_at: float = time.time()
+        # Number of step_end events already emitted this session.
+        # Used to estimate steps_left for the per-step budget calc.
+        self.steps_completed: int = 0
 
     def next_step_id(self) -> str:
         self.counter += 1
@@ -988,15 +1121,19 @@ def _iter_message_events(
                     "node": node_name,
                 },
             )
-            latency_ms = round(
-                (time.time() - ctx.start_times.pop(step_id, time.time())) * 1000, 1
-            )
+            # NOTE: do NOT pop start_times here — the chat_stream
+            # event_gen layer needs to peek it to enforce the
+            # Kiki-mode _MIN_STEP_DURATION_S pacing before yielding
+            # step_end. event_gen pops it after the sleep, so the
+            # latency_ms reported here is a placeholder (0.0) and
+            # will be corrected by event_gen before going on the
+            # wire.
             yield (
                 "step_end",
                 {
                     "step_id": step_id,
                     "preview": str(content)[:300],
-                    "latency_ms": latency_ms,
+                    "latency_ms": 0.0,
                     "node": node_name,
                 },
             )
@@ -1023,8 +1160,13 @@ def _iter_message_events(
         content = getattr(msg, "content", "")
         # Real tool latency: delta between ToolMessage arrival and the
         # step_start time recorded when the tool_call was first seen.
+        # We capture this for the trace (uses the real duration) but
+        # do NOT pop start_times here — the chat_stream event_gen
+        # layer needs to peek it for the Kiki-mode min-step-duration
+        # pacing. event_gen rewrites latency_ms to the post-pad
+        # duration before the SSE step_end is emitted.
         tool_latency_ms = round(
-            (time.time() - ctx.start_times.pop(step_id, time.time())) * 1000, 1
+            (time.time() - ctx.start_times.get(step_id, time.time())) * 1000, 1
         )
         tool_name = getattr(msg, "name", "unknown") or "unknown"
         tool_args = ctx.tool_args.pop(tc_id, {}) if tc_id else {}
@@ -1038,7 +1180,7 @@ def _iter_message_events(
             {
                 "step_id": step_id,
                 "preview": str(content)[:200],
-                "latency_ms": tool_latency_ms,
+                "latency_ms": 0.0,  # placeholder; event_gen rewrites
                 "node": node_name,
             },
         )
