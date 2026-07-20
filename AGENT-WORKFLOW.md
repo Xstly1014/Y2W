@@ -927,5 +927,98 @@ curl "http://127.0.0.1:8000/api/feedback?limit=10"
 # 1. Agent Web 聊天:  http://127.0.0.1:8000/
 # 2. Admin 运营后台:  http://127.0.0.1:8000/admin
 # 3. 电商前端:        http://127.0.0.1:8002/shop
+
+---
+
+## 11. Agent 链路全面 Review 报告（2026-07-20，第四轮）
+
+本轮对项目做了"全面 review"——对照 README/AGENT-WORKFLOW，**梳理模块 → 找性能瓶颈 → 查待实施项 → 列修复方案**。完整产物在 `optimization_logs/2026-07-20/` 目录：
+
+| 文件 | 内容 |
+|---|---|
+| `optimization_logs/2026-07-20/README.md` | TL;DR + Review 范围 + 文档清单 + 一句话总结 |
+| `optimization_logs/2026-07-20/architecture.md` | 三服务架构图 + 模块依赖图 + 11 模块职责速查 + 9 大技术选型 + 数据持久化目录 |
+| `optimization_logs/2026-07-20/data-flow.md` | 一次 `/api/chat/stream` 完整时序图（19 步） + 关键步骤代码定位 + 数据格式详解 + 6 大设计点 + 排障速查 |
+| `optimization_logs/2026-07-20/issues-and-fixes.md` | 4 级优先级问题清单（4 P0 + 7 P1 + 5 P2 + 5 P3）+ 根因 + 修复路径 + 验收标准 |
+| `optimization_logs/2026-07-20/pending-items.md` | 89 项核查（28 核心模块 + 61 扩展点）—— 61 完成 / 10 部分 / 18 未实现，**完成率 68%** |
+| `optimization_logs/2026-07-20/resume-highlight.md` | 简历可用的硬指标 + 技术深度 + 业务影响 + 量化数据汇总 |
+
+### 11.1 本轮 Review 核心结论
+
+| 维度 | 评分 | 关键短板 |
+|---|---|---|
+| 模块完整度 | ⭐⭐⭐⭐ | 11 模块全部到位，但 5 个新增强功能未接入主链路（code_review/data_analysis Skill + prompt cache + batch inference + 飞轮自动分类） |
+| 代码质量 | ⭐⭐⭐⭐ | 类型齐全、安全成熟，**但 `observability/tracing.py` latency 全部为 0**（不准确） |
+| 稳定性 | ⭐⭐⭐⭐ | 121 单测 2.8s 全过，**但 JsonlStore 并发不安全**（read-all → rewrite） |
+| 性能 | ⭐⭐⭐ | LLM 1-3s / RAG 50ms，**但 router LLM 同步阻塞 event loop** |
+| 可观测性 | ⭐⭐⭐⭐ | trace 完整、cost 估算、token 都有，**缺真实 latency + LangSmith + 实时 tail** |
+| UX | ⭐⭐⭐⭐⭐ | Kiki 风格面板、teal 渐变、推理卡片、暗色模式一应俱全 |
+| 业务闭环 | ⭐⭐⭐⭐ | chat → trace → flywheel → post-train 已通，**DPO 配对质量差**（已审计） |
+
+### 11.2 P0 必修 4 项（已写 issues-and-fixes.md）
+
+| # | 问题 | 修复路径 | 验收 |
+|---|---|---|---|
+| P0-1 | `record_llm_call` 硬编码 `latency_ms=0` | `chat.py` 用 `time.perf_counter()` 计时后传值 | trace 的每步 latency > 0，summary total 误差 < 5% |
+| P0-2 | router 节点 `def` 同步阻塞 event loop | 改 `async def`，`await llm.ainvoke(...)` | 10 并发 chat p99 延迟与单请求差 < 30% |
+| P0-3 | JsonlStore 跨进程不安全 | 加 `fcntl.flock` 或迁 SQLite | 2 worker 跑 eval，badcase 计数 = 单 worker × 2 |
+| P0-4 | 子 agent `create_react_agent` 同步阻塞 | 检查 langgraph async prebuilt；否则手动包装 async | 同 P0-2 |
+
+### 11.3 P1 接入主链路 7 项
+
+| # | 功能 | 当前状态 | 接入点 |
+|---|---|---|---|
+| P1-1 | traces 索引（10K 场景 < 200ms） | 全量扫 | `data/traces/_index.json` |
+| P1-3 | LangSmith 导出 | 仅本地 JSONL | `tracing.py` 加 LANGCHAIN_API_KEY 检测 |
+| P1-4 | DPO 配对质量（embedding + LLM judge） | 阈值已改 0.5 | 加 LLM judge 二次校验 |
+| P1-5 | 飞轮主路径走新功能（classify + dedup + priority） | 老 `record_case` 默认 | `api/routes/ops.py:feedback_router.post` 改 `record_case_classified` |
+| P1-6 | PromptCache 接入 LLM | 仅 `cached_invoke` helper | `core/llm.py:build_llm` 套 `CachingLLM` wrapper |
+| P1-7 | 新 Skill 接入 agent | code_review / data_analysis 未挂 | `api/deps.py:122-136` 加到 `knowledge_tools` |
+
+### 11.4 关键文档速查
+
+后续 agent 接手时按这个顺序读：
+1. **`optimization_logs/2026-07-20/README.md`** — 5 分钟了解 Review 全貌
+2. **`optimization_logs/2026-07-20/architecture.md`** — 30 分钟掌握模块职责和依赖
+3. **`optimization_logs/2026-07-20/data-flow.md`** — 排障时查 19 步时序图
+4. **`optimization_logs/2026-07-20/issues-and-fixes.md`** — 接活时按优先级领任务
+5. **`optimization_logs/2026-07-20/pending-items.md`** — 选 P1 接入任务时看上下文
+6. **`optimization_logs/2026-07-20/resume-highlight.md`** — 写简历时直接抄量化指标
+
+### 11.5 验证命令速查（本轮新增）
+
+```powershell
+# 全量单测（确保 review 期间没破坏）
+.venv\Scripts\python.exe -m pytest -q
+
+# 召回评估（验证 P1-1 修索引后还能跑）
+.venv\Scripts\python.exe -m evaluation retrieval
+
+# 后训练审计（验证 P1-4 修配对质量后指标改善）
+.venv\Scripts\python.exe -m scripts.audit_post_training
+
+# 飞轮统计（验证 P1-5 主路径走新功能）
+.venv\Scripts\python.exe -c "from data_flywheel import BadCaseCollector; c = BadCaseCollector(); print(c.category_stats())"
+
+# 推理加速报告（验证 P1-6 PromptCache 接入后命中率）
+.venv\Scripts\python.exe -m scripts.eval_inference_speed
+```
+
+### 11.6 本轮新增的坑（继续编号）
+
+55. **`observability/tracing.py` latency 全部为 0 是已识别 P0-1**
+    - 现象：`recorder.record_llm_call(msg, latency_ms=0.0)` 硬编码 0，trace dashboard 的 latency 统计完全无意义。
+    - 影响：性能瓶颈定位失效；与"花了多少钱看不到花在哪"同等级问题。
+    - 解决方向：SSE `messages` stream 模式有 langgraph metadata 可计算，详见 `issues-and-fixes.md` P0-1。
+
+56. **router 节点同步阻塞是已识别 P0-2**
+    - 现象：langgraph `StateGraph` 的 router 节点是 `def` 同步函数，`llm.invoke(...)` 阻塞 event loop。
+    - 影响：同进程所有 SSE 流同时卡住，10 并发下 p99 翻倍。
+    - 解决方向：router 改 `async def router_node(state)` + `await llm.ainvoke(...)`，详见 `issues-and-fixes.md` P0-2。
+
+57. **新模块未接入主链路是已识别 P1-5/6/7**
+    - 现象：code_review/data_analysis Skill + PromptCache + 飞轮自动分类 都已经实现并注册，但默认 agent 走的还是老路径。
+    - 现象本质：模块化设计时为了"向后兼容"保留老接口，新功能就成了"造好零件没装上车"。
+    - 解决原则：每个新模块要同时改 `__init__.py`（导出）+ `main.py:build_default_agent()` 和 `api/deps.py:get_agent_for_tenant()`（接入），不能只改一半。详见 `issues-and-fixes.md` P1-5/6/7。
 ```
 
