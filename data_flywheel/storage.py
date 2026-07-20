@@ -138,9 +138,21 @@ class JsonlStore:
             new_records = mutate_fn(records)
             # Rewrite the file atomically: write to a temp file then rename.
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            with tmp.open("w", encoding="utf-8") as f:
-                for rec in new_records:
-                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-            # os.replace is atomic on both Windows and POSIX.
-            tmp.replace(self.path)
+            try:
+                with tmp.open("w", encoding="utf-8") as f:
+                    for rec in new_records:
+                        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                # os.replace is atomic on both Windows and POSIX.
+                tmp.replace(self.path)
+            finally:
+                # Clean up the temp file if the write or replace failed
+                # (disk full / permission / etc.) so we don't leave
+                # stale *.tmp files lying around. After a successful
+                # replace, tmp no longer exists so this is a no-op.
+                # See `optimization_logs/2026-07-21/second-review.md` P2-6.
+                if tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
             return new_records

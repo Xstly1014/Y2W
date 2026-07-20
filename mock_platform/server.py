@@ -13,6 +13,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
@@ -31,7 +32,11 @@ app = FastAPI(title="Mock E-commerce Platform", version="0.1.0")
 # Per-tenant locks so concurrent refund requests for the same tenant are
 # serialised. Without this, two simultaneous POST /refunds could both read
 # `order["refundable"] == True` and both succeed.
-_TENANT_LOCKS: dict[str, Lock] = {}
+#
+# Bounded LRU so a long-running service doesn't leak one Lock per tenant
+# forever (10K tenants ≈ 800KB). See P3-6.
+_TENANT_LOCKS: OrderedDict[str, Lock] = OrderedDict()
+_TENANT_LOCKS_MAX = 1024
 _TENANT_LOCKS_GUARD = Lock()
 
 
@@ -42,6 +47,12 @@ def _tenant_lock(tenant_id: str) -> Lock:
         if lock is None:
             lock = Lock()
             _TENANT_LOCKS[tenant_id] = lock
+            # Evict oldest entry if the cache is full.
+            while len(_TENANT_LOCKS) > _TENANT_LOCKS_MAX:
+                _TENANT_LOCKS.popitem(last=False)
+        else:
+            # Mark as recently used.
+            _TENANT_LOCKS.move_to_end(tenant_id)
         return lock
 
 

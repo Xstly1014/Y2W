@@ -144,12 +144,20 @@ def create_order(db: Session, user_id: str, req: OrderCreateIn) -> Order:
     recipient, phone, address_line = _resolve_address(db, user_id, req)
     items = _collect_items(db, user_id, req)
 
-    # Reserve stock for each SKU. We rely on db.flush() + the session's
-    # transaction to make the reservation atomic. For true row-level locking
-    # under concurrency, a production system would use `with_for_update()`.
+    # Reserve stock for each SKU under row-level lock (SELECT ... FOR UPDATE).
+    # This blocks concurrent create_order on the same SKU until the current
+    # transaction commits or rolls back, preventing overselling. See
+    # `optimization_logs/2026-07-21/second-review.md` P0-5.
     items_subtotal = Decimal("0")
     order_items: list[tuple[ProductSKU, Product, int, Decimal]] = []
     for sku, prod, qty in items:
+        # Re-fetch the SKU with FOR UPDATE to acquire a row lock.
+        locked_sku = db.execute(
+            select(ProductSKU).where(ProductSKU.id == sku.id).with_for_update()
+        ).scalar_one_or_none()
+        if locked_sku is None:
+            raise ValueError(f"SKU {sku.sku_code} disappeared during checkout")
+        sku = locked_sku
         available = sku.stock - sku.reserved
         if qty > available:
             raise ValueError(

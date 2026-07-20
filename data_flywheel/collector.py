@@ -151,17 +151,7 @@ class BadCaseCollector:
         record["last_seen"] = now
 
         if dedup:
-            existing = list(target.iter_records())
-            dup = dedup_check(
-                result.user_input, existing, embeddings=self._embeddings,
-            )
-            if dup.is_duplicate and dup.duplicate_of:
-                updated = self._increment_occurrence(target, dup.duplicate_of, now)
-                logger.debug(
-                    "merged dup case into id=%s (strategy=%s)",
-                    dup.duplicate_of, dup.strategy,
-                )
-                return updated
+            return self._dedup_or_append(target, record, result.user_input, now)
 
         target.append(record)
         logger.debug("recorded classified case id=%s category=%s", record["id"], cls_result.category)
@@ -207,17 +197,7 @@ class BadCaseCollector:
         record["last_seen"] = now
 
         if dedup:
-            existing = list(target.iter_records())
-            dup = dedup_check(
-                user_input, existing, embeddings=self._embeddings,
-            )
-            if dup.is_duplicate and dup.duplicate_of:
-                updated = self._increment_occurrence(target, dup.duplicate_of, now)
-                logger.debug(
-                    "merged dup interaction into id=%s (strategy=%s)",
-                    dup.duplicate_of, dup.strategy,
-                )
-                return updated
+            return self._dedup_or_append(target, record, user_input, now)
 
         target.append(record)
         return record
@@ -250,6 +230,49 @@ class BadCaseCollector:
 
         store.read_modify_write(mutate)
         return updated_holder[0] if updated_holder else {}
+
+    def _dedup_or_append(
+        self,
+        store: JsonlStore,
+        record: dict[str, Any],
+        user_input: str,
+        now: str,
+    ) -> dict[str, Any]:
+        """Atomically dedup-or-append a record under the cross-process lock.
+
+        Closes the TOCTOU window that existed when `dedup_check` ran
+        outside the file lock: two concurrent writers could both see no
+        duplicate and both append, producing two near-identical records.
+        Now the read → dedup → increment/append → rewrite cycle holds the
+        cross-process lock for the entire operation.
+
+        Returns the stored record (updated original if dup, else the new
+        record). See `optimization_logs/2026-07-21/second-review.md` P1-10.
+        """
+        result_holder: list[dict[str, Any]] = []
+
+        def mutate(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            dup = dedup_check(user_input, records, embeddings=self._embeddings)
+            if dup.is_duplicate and dup.duplicate_of:
+                for rec in records:
+                    if rec.get("id") == dup.duplicate_of:
+                        rec["occurrence_count"] = rec.get("occurrence_count", 1) + 1
+                        rec["last_seen"] = now
+                        result_holder.append(dict(rec))
+                        logger.debug(
+                            "merged dup into id=%s (strategy=%s)",
+                            dup.duplicate_of, dup.strategy,
+                        )
+                        break
+                return records  # no new record — just the increment
+            # No dup: append the new record.
+            records.append(record)
+            result_holder.append(record)
+            logger.debug("recorded new record id=%s", record["id"])
+            return records
+
+        store.read_modify_write(mutate)
+        return result_holder[0] if result_holder else {}
 
     # ------------------------------------------------------------------ #
     # New: query / analyze

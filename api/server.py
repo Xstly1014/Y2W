@@ -67,8 +67,20 @@ async def lifespan(app: FastAPI):
         except ImportError:
             logger.warning(
                 "LANGCHAIN_TRACING_V2=true but `langsmith` package is not "
-                "installed. Run `pip install langsmith` to enable LangSmith export."
+                "installed. Run `pip install langsmith` to enable LangSmith export. "
+                "Clearing LANGCHAIN_* env vars so LangChain doesn't ImportError "
+                "on the first LLM call."
             )
+            # Clear env vars so LangChain doesn't try to load the tracer
+            # (which would ImportError on the first LLM call). See
+            # `optimization_logs/2026-07-21/second-review.md` P1-12.
+            for _k in (
+                "LANGCHAIN_TRACING_V2",
+                "LANGCHAIN_API_KEY",
+                "LANGCHAIN_PROJECT",
+                "LANGCHAIN_ENDPOINT",
+            ):
+                os.environ.pop(_k, None)
 
     default_tenant = settings.default_tenant_id
     logger.info("warming up agent for default tenant %r ...", default_tenant)

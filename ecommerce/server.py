@@ -62,11 +62,18 @@ async def lifespan(app: FastAPI):
         init_db()
         logger.info("Database schema ensured.")
     except Exception as e:
-        logger.error("init_db failed (is PostgreSQL running?): %s", e)
-        logger.error("Dsn: %s", settings.database_url.replace(
-            settings.database_url.split("://")[1].split("@")[0] if "@" in settings.database_url else "",
-            "***:***"
-        ))
+        # Fail fast: if the DB is unreachable the API will 500 on every
+        # request anyway. Better to exit so the operator notices and a
+        # process supervisor (systemd / docker / supervisor) can restart.
+        # See `optimization_logs/2026-07-21/second-review.md` P2-7.
+        redacted = settings.database_url
+        try:
+            creds = settings.database_url.split("://")[1].split("@")[0]
+            redacted = settings.database_url.replace(creds, "***:***")
+        except (IndexError, ValueError):
+            pass
+        logger.error("init_db failed (is PostgreSQL running?): %s | dsn=%s", e, redacted)
+        raise SystemExit(1)
 
     # Start background worker.
     task = asyncio.create_task(_order_lifecycle_worker(app))
@@ -87,13 +94,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS — the SPA is served from the same origin but the agent service
-    # (api 8000) may be called directly from the browser too.
+    # CORS — restrict to known origins (SPA same-origin + agent API cross-origin).
+    # Defaults are local dev; production sets ECOMMERCE_CORS_ORIGINS.
+    # See `optimization_logs/2026-07-21/second-review.md` P1-11.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=settings.cors_origins_list,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Tenant-Id", "X-Request-Id"],
         allow_credentials=False,
     )
 

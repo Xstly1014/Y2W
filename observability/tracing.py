@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import time
+from collections import OrderedDict
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -37,6 +40,48 @@ from config import settings
 from observability.cost import estimate_cost, extract_usage
 
 logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------- #
+# Cross-process file locking (shared pattern with data_flywheel/storage.py).
+# Used for the trace index so multiple API workers don't interleave bytes.
+# See `optimization_logs/2026-07-21/second-review.md` P1-9.
+# --------------------------------------------------------------------------- #
+if sys.platform == "win32":
+    import msvcrt
+
+    def _acquire_flock(f) -> None:
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+
+    def _release_flock(f) -> None:
+        try:
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+else:
+    import fcntl
+
+    def _acquire_flock(f) -> None:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+
+    def _release_flock(f) -> None:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+
+
+@contextmanager
+def _cross_process_lock(lock_path: Path):
+    """Acquire an exclusive cross-process lock via a sidecar ``.lock`` file."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(lock_path, "a+b")
+    try:
+        _acquire_flock(f)
+        yield
+    finally:
+        _release_flock(f)
+        f.close()
 
 
 def _traces_dir() -> Path:
@@ -57,14 +102,20 @@ def _index_path() -> Path:
     return _traces_dir() / "_index.jsonl"
 
 
-# Cross-process lock for the index file so concurrent trace writers
-# (multiple API workers) don't interleave bytes.
+def _index_lock_path() -> Path:
+    return _index_path().with_suffix(".lock")
+
+
+# In-process lock guarding the index file. Cross-process safety is provided
+# by _cross_process_lock above. Both are acquired when writing the index.
 _INDEX_LOCK = Lock()
 
 
-# One lock per trace file path so concurrent TraceRecorders writing to the
-# same thread_id file don't interleave bytes.
-_TRACE_FILE_LOCKS: dict[str, Lock] = {}
+# Bounded LRU cache of per-file locks. Without a bound, long-running
+# services would leak one Lock per thread_id forever (10K threads ≈ 800KB).
+# See `optimization_logs/2026-07-21/second-review.md` P3-7.
+_TRACE_FILE_LOCKS: OrderedDict[str, Lock] = OrderedDict()
+_TRACE_FILE_LOCKS_MAX = 1024
 _TRACE_FILE_LOCKS_GUARD = Lock()
 
 
@@ -75,6 +126,12 @@ def _trace_file_lock(path: Path) -> Lock:
         if lock is None:
             lock = Lock()
             _TRACE_FILE_LOCKS[key] = lock
+            # Evict oldest entry if the cache is full.
+            while len(_TRACE_FILE_LOCKS) > _TRACE_FILE_LOCKS_MAX:
+                _TRACE_FILE_LOCKS.popitem(last=False)
+        else:
+            # Mark as recently used.
+            _TRACE_FILE_LOCKS.move_to_end(key)
         return lock
 
 
@@ -202,7 +259,10 @@ class TraceRecorder:
         }
         line = json.dumps(summary, ensure_ascii=False) + "\n"
         path = _index_path()
-        with _INDEX_LOCK:
+        # Hold both the in-process lock (serialises threads in this worker)
+        # and the cross-process lock (serialises workers). The cross-process
+        # lock uses a sidecar .lock file so it survives process restarts.
+        with _INDEX_LOCK, _cross_process_lock(_index_lock_path()):
             with path.open("a", encoding="utf-8") as f:
                 f.write(line)
 

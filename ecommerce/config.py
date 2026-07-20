@@ -58,5 +58,23 @@ class EcommerceSettings(BaseSettings):
     # ----- Seeding -----
     seed_products_count: int = Field(default=120, alias="ECOMMERCE_SEED_PRODUCTS")
 
+    # ----- CORS -----
+    # Comma-separated list of allowed origins for the browser SPA / agent
+    # API. Defaults to local dev origins. Production should set
+    # ECOMMERCE_CORS_ORIGINS=https://shop.example.com,https://admin.example.com
+    # See `optimization_logs/2026-07-21/second-review.md` P1-11.
+    cors_origins: str = Field(
+        default=(
+            "http://127.0.0.1:8000,http://localhost:8000,"
+            "http://127.0.0.1:8002,http://localhost:8002,"
+            "http://127.0.0.1:8001,http://localhost:8001"
+        ),
+        alias="ECOMMERCE_CORS_ORIGINS",
+    )
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
 
 settings = EcommerceSettings()

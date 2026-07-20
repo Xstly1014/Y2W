@@ -1,6 +1,7 @@
 """Eval runner — loads cases, runs the agent, scores, writes report."""
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -98,11 +99,19 @@ class EvalRunner:
         """
         cases = cases or self.load_cases()
         max_workers = max_workers or settings.llm_batch_max_workers
+        # Capture the current context so contextvars (e.g. tenant_id from
+        # skills.commerce.current_tenant_id) propagate into worker threads.
+        # ThreadPoolExecutor does NOT propagate contextvars by default —
+        # without this, the agent running in a worker thread can't see the
+        # caller's tenant_id and commerce tools hit the wrong tenant.
+        # See `optimization_logs/2026-07-21/second-review.md` P1-8.
+        ctx = contextvars.copy_context()
         # Order preservation: submit in order, collect by case_id.
         results_by_case_id: dict[str, EvalResult] = {}
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {
-                pool.submit(self._run_one, case): case.case_id
+                # ctx.run re-enters the captured context in the worker thread.
+                pool.submit(ctx.run, self._run_one, case): case.case_id
                 for case in cases
             }
             for fut in as_completed(futures):

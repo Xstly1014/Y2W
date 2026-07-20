@@ -27,6 +27,13 @@ from skills.commerce import current_tenant_id
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/kb", tags=["knowledge-base"])
 
+# Upload DoS guards. Frontend also enforces 5MB per file, but the server
+# MUST validate independently (curl/Postman bypasses frontend checks).
+# See `optimization_logs/2026-07-21/second-review.md` P0-6.
+MAX_UPLOAD_FILES = 20
+MAX_UPLOAD_FILE_SIZE = 5 * 1024 * 1024  # 5 MiB per file
+MAX_UPLOAD_TOTAL_SIZE = 50 * 1024 * 1024  # 50 MiB per request
+
 
 def _tenant(x_tenant_id: str | None) -> str:
     """Resolve and validate the tenant id from the request header.
@@ -54,6 +61,14 @@ async def upload_documents(
     indexer = get_indexer()
     results: list[IngestResponse] = []
 
+    # Cap file count up front to bound work.
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many files: {len(files)} (max {MAX_UPLOAD_FILES})",
+        )
+
+    total_size = 0
     # Persist uploads to a temp dir, then route through ingest_file so the
     # same code path serves the CLI and the API.
     with tempfile.TemporaryDirectory() as tmp:
@@ -71,8 +86,32 @@ async def upload_documents(
             if suffix not in {".txt", ".md"}:
                 results.append(IngestResponse(path=safe_name, chunks=0))
                 continue
+            # Pre-check declared size if the client sent Content-Length.
+            if upload.size is not None and upload.size > MAX_UPLOAD_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"File {safe_name} too large: {upload.size} bytes "
+                        f"(max {MAX_UPLOAD_FILE_SIZE // 1024 // 1024} MiB)"
+                    ),
+                )
             dest = tmpdir / safe_name
             content = await upload.read()
+            # Authoritative post-read size check (Content-Length can be missing/wrong).
+            if len(content) > MAX_UPLOAD_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"File {safe_name} too large: {len(content)} bytes "
+                        f"(max {MAX_UPLOAD_FILE_SIZE // 1024 // 1024} MiB)"
+                    ),
+                )
+            total_size += len(content)
+            if total_size > MAX_UPLOAD_TOTAL_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Total upload too large (max {MAX_UPLOAD_TOTAL_SIZE // 1024 // 1024} MiB)",
+                )
             dest.write_bytes(content)
             try:
                 # Set tenant context so any (future) tenant-aware logic works.

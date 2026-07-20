@@ -289,9 +289,12 @@
         if (!text) return '';
         try {
           const raw = window.marked ? window.marked.parse(text) : raw_text_safe(text);
-          return window.DOMPurify ? window.DOMPurify.sanitize(raw) : raw;
+          // When DOMPurify is unavailable, fall back to the escaped plain
+          // text rather than the marked HTML output — marked's escaping
+          // is not a security guarantee. See P2-8.
+          return window.DOMPurify ? window.DOMPurify.sanitize(raw) : raw_text_safe(text);
         } catch (e) {
-          return text;
+          return raw_text_safe(text);
         }
       }
       // Fallback when marked is unavailable: escape HTML and convert
