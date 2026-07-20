@@ -565,6 +565,15 @@
           // Kiki-style: answer attachments populated on `final`:
           followups: null,        // ["你可以继续：" chips array]
           primaryAction: null,    // {id,label,icon,prompt}  -> gradient button
+          // Kiki multi-turn: mid-conversation AI bubbles emitted
+          // before tool calls (interim_answer SSE event). Each entry
+          // is a markdown string rendered as a small bubble between
+          // the reasoning card and the final answer.
+          interimAnswers: [],
+          // Kiki action cards: clickable buttons rendered after the
+          // final answer. Collected from action_card SSE events and
+          // the final event's action_cards field.
+          actionCards: [],
         };
         messages.value.push(aiMsg);
         sending.value = true;
@@ -647,6 +656,30 @@
               // Streaming partial text would conflict with the typing dot.
               return;
             }
+            if (event === 'interim_answer') {
+              // Kiki multi-turn: a mid-conversation AI bubble emitted
+              // when the LLM outputs visible text alongside a tool_call.
+              // Render it immediately as a small bubble so the user sees
+              // the agent's narration BEFORE the tool runs. Multiple
+              // interim answers can appear in a single turn.
+              if (data && data.answer) {
+                aiMsg.interimAnswers.push(data.answer);
+                nextTickScroll();
+              }
+              return;
+            }
+            if (event === 'action_card') {
+              // Kiki action card: a clickable button emitted separately
+              // from `final`. Collect now; rendered after the final answer.
+              if (data && data.id && data.label && data.prompt) {
+                aiMsg.actionCards.push({
+                  id: data.id,
+                  label: data.label,
+                  prompt: data.prompt,
+                });
+              }
+              return;
+            }
             if (event === 'final') {
               aiMsg.text = data.answer || '';
               aiMsg.trace_id = data.trace_id || null;
@@ -654,6 +687,16 @@
               // Auto-collapse the reasoning card once the answer is in,
               // so the answer takes focus. User can re-expand to review.
               aiMsg.reasoningExpanded = false;
+              // Backend may also attach action_cards to the final event
+              // (batch). Merge with any already collected from streaming.
+              if (Array.isArray(data.action_cards) && data.action_cards.length) {
+                const seen = new Set(aiMsg.actionCards.map((c) => c.id));
+                data.action_cards.forEach((c) => {
+                  if (c && c.id && c.label && c.prompt && !seen.has(c.id)) {
+                    aiMsg.actionCards.push({ id: c.id, label: c.label, prompt: c.prompt });
+                  }
+                });
+              }
               // Kiki-style follow-up chips: shown right under the answer
               // card. Backend may attach `followups`; if absent, pick a
               // small set of generic follow-ups based on the route.
@@ -985,6 +1028,21 @@
                     </div>
                   </div>
 
+                  <!-- Kiki multi-turn: interim answer bubbles (narration
+                       emitted before tool calls). Shown between the reasoning
+                       card and the final answer. -->
+                  <div
+                    v-if="m.interimAnswers && m.interimAnswers.length"
+                    class="cs-interim-answers"
+                  >
+                    <div
+                      v-for="(ia, iai) in m.interimAnswers"
+                      :key="'interim-' + iai"
+                      class="cs-knowledge-card cs-interim-answer"
+                      v-html="renderMarkdown(ia)"
+                    ></div>
+                  </div>
+
                   <!-- The actual answer — white knowledge card. -->
                   <div v-if="m.text" class="cs-knowledge-card" v-html="renderMarkdown(m.text)"></div>
 
@@ -998,6 +1056,23 @@
                     <span :class="['cs-primary-action-icon', 'cs-primary-action-icon-' + m.primaryAction.icon]"></span>
                     <span class="cs-primary-action-label">{{ m.primaryAction.label }}</span>
                   </button>
+
+                  <!-- Kiki action cards: clickable buttons from [ACTION] blocks. -->
+                  <div
+                    v-if="!m.typing && m.actionCards && m.actionCards.length"
+                    class="cs-action-cards"
+                  >
+                    <button
+                      v-for="card in m.actionCards"
+                      :key="card.id"
+                      class="cs-action-card-btn"
+                      :disabled="sending"
+                      @click="sendMessage(card.prompt)"
+                    >
+                      <span class="cs-action-card-sparkle">✦</span>
+                      <span class="cs-action-card-label">{{ card.label }}</span>
+                    </button>
+                  </div>
 
                   <!-- Kiki-style: follow-up suggestion chips ("你可以继续："). -->
                   <div v-if="!m.typing && m.followups && m.followups.length" class="cs-followups">
