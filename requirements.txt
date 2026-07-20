@@ -1,0 +1,47 @@
+# Core LLM orchestration
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-openai>=0.2.0
+# Agent graph framework (build_agent / build_multi_agent both depend on this).
+# Was previously missing — project imported langgraph.* but never declared it,
+# so fresh installs would crash on first agent build.
+langgraph>=0.2.0
+langgraph-checkpoint>=0.2.0
+
+# Embeddings & vector store (RAG / long-term memory)
+faiss-cpu>=1.8.0
+sentence-transformers>=3.0.0
+
+# MCP (Model Context Protocol)
+# NOTE: install only when wiring real MCP transport in mcp_integration/client.py.
+# mcp>=0.9.0
+
+# Config & schema
+python-dotenv>=1.0.1
+pydantic>=2.7.0
+pydantic-settings>=2.4.0
+
+# Evaluation & data flywheel
+datasets>=2.20.0
+pyyaml>=6.0.2
+
+# Utilities
+rich>=13.7.0
+httpx>=0.27.0
+
+# Web platform (FastAPI + ASGI server + SSE + form parsing)
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+sse-starlette>=2.1.0
+python-multipart>=0.0.9
+
+# E-commerce platform (PostgreSQL + migrations + DB tooling)
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+asyncpg>=0.29.0
+alembic>=1.13.0
+sqlalchemy-utils>=0.41.0
+
+# Dev / test
+pytest>=8.0.0

@@ -1,0 +1,38 @@
+# ===== Secrets =====
+.env
+.env.*
+!.env.example
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# ===== IDE / Editor (kept out of VCS) =====
+.trae/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ===== Project data (generated runtime artifacts) =====
+data/
+logs/
+*.log
+
+# ===== Test / coverage =====
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ===== Personal docs =====
+resume/
+*.pdf

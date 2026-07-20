@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>优淘商城 · 跨境电商平台</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><defs><linearGradient id=%22g%22 x1=%220%22 y1=%220%22 x2=%221%22 y2=%221%22><stop offset=%220%22 stop-color=%22%23ff3b30%22/><stop offset=%221%22 stop-color=%22%23ff6b6b%22/></linearGradient></defs><rect x=%2210%22 y=%2210%22 width=%2280%22 height=%2280%22 rx=%2220%22 fill=%22url(%23g)%22/><path d=%22M30 40 L70 40 M30 55 L70 55 M30 70 L55 70%22 stroke=%22white%22 stroke-width=%228%22 stroke-linecap=%22round%22/></svg>">
+  <!-- Vue 3 + Vue Router 4 + vue-demi + Pinia (self-hosted, no CDN dependency) -->
+  <!-- Load order matters: Vue -> vue-demi (bridges Vue 3) -> Pinia (needs VueDemi) -> Vue Router -->
+  <script src="/shop/static/vendor/vue.global.prod.js"></script>
+  <script src="/shop/static/vendor/vue-demi.iife.js"></script>
+  <script src="/shop/static/vendor/pinia.iife.prod.js"></script>
+  <script src="/shop/static/vendor/vue-router.global.prod.js"></script>
+  <script src="/shop/static/vendor/marked.min.js"></script>
+  <script src="/shop/static/vendor/purify.min.js"></script>
+  <link rel="stylesheet" href="/shop/static/styles.css">
+</head>
+<body>
+  <div id="app">
+    <router-view></router-view>
+    <customer-service-widget></customer-service-widget>
+  </div>
+  <script src="/shop/static/api.js"></script>
+  <script src="/shop/static/store.js"></script>
+  <script src="/shop/static/components.js"></script>
+  <script src="/shop/static/pages.js"></script>
+  <script src="/shop/static/app.js"></script>
+</body>
+</html>

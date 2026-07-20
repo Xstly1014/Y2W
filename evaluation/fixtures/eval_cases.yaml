@@ -1,0 +1,38 @@
+# Default evaluation cases for the agent.
+# Each case has:
+#   case_id    : unique id
+#   user_input : the prompt sent to the agent
+#   expected   : the expected answer or substring
+#   metric     : one of exact_match | contains | llm_judge
+#   metadata   : free-form metadata (e.g. category, difficulty)
+- case_id: calc-001
+  user_input: "What is 12 * 7?"
+  expected: "84"
+  metric: contains
+  metadata:
+    category: calculator
+    difficulty: easy
+
+- case_id: calc-002
+  user_input: "Compute sqrt(144) + 3."
+  expected: "15"
+  metric: contains
+  metadata:
+    category: calculator
+    difficulty: easy
+
+- case_id: time-001
+  user_input: "What time is it now?"
+  expected: ":"
+  metric: contains
+  metadata:
+    category: time
+    difficulty: easy
+
+- case_id: search-001
+  user_input: "What is RAG? Use the search tool."
+  expected: "Retrieval-Augmented Generation"
+  metric: contains
+  metadata:
+    category: search
+    difficulty: easy

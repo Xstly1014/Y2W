@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Diag</title></head>
+<body>
+<div id="status">Loading...</div>
+<script>
+  window.addEventListener('load', function() {
+    var status = document.getElementById('status');
+    var html = '';
+    html += 'Vue: ' + (typeof window.Vue) + '<br>';
+    if (typeof window.Vue !== 'undefined' && window.Vue) {
+      html += 'Vue.version: ' + window.Vue.version + '<br>';
+    }
+    html += 'VueDemi: ' + (typeof window.VueDemi) + '<br>';
+    if (typeof window.VueDemi !== 'undefined' && window.VueDemi) {
+      html += 'VueDemi.isVue3: ' + window.VueDemi.isVue3 + '<br>';
+    }
+    html += 'Pinia: ' + (typeof window.Pinia) + '<br>';
+    if (typeof window.Pinia !== 'undefined' && window.Pinia) {
+      html += 'Pinia.defineStore: ' + (typeof window.Pinia.defineStore) + '<br>';
+      html += 'Pinia.createPinia: ' + (typeof window.Pinia.createPinia) + '<br>';
+    }
+    html += 'VueRouter: ' + (typeof window.VueRouter) + '<br>';
+    status.innerHTML = html;
+  });
+</script>
+<script src="/shop/static/vendor/vue.global.prod.js"></script>
+<script src="/shop/static/vendor/vue-demi.iife.js"></script>
+<script src="/shop/static/vendor/pinia.iife.prod.js"></script>
+<script src="/shop/static/vendor/vue-router.global.prod.js"></script>
+</body>
+</html>

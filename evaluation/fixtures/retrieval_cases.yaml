@@ -1,0 +1,79 @@
+# Retrieval eval cases — Chinese cross-border e-commerce scenarios.
+#
+# Each case has:
+#   case_id       : unique id
+#   query         : the user query sent to the retriever
+#   relevant_ids  : ground-truth doc ids (must match Indexer._doc_id format:
+#                   "{source_basename}#chunk{chunk_index}", e.g. "policy.md#chunk0")
+#   collection    : vector store collection to query (default: documents)
+#   k             : top-k cutoff (default: 5)
+#   metrics       : list of metric names from RETRIEVAL_METRICS to compute
+#
+# Scenarios covered: 退款政策 / 物流查询 / 商品库存 / 优惠券与会员 /
+#   售后服务 / 跨境关税 / 支付方式 / 质量问题退换货
+- case_id: refund_policy
+  query: "如何申请退款？退款时效是多久？"
+  relevant_ids:
+    - "policy.md#chunk0"
+    - "policy.md#chunk1"
+  collection: "kb_demo-tenant"
+  k: 5
+  metrics: ["recall@k", "mrr", "ndcg", "hit@k"]
+
+- case_id: logistics_query
+  query: "我的快递到哪了？物流怎么查？"
+  relevant_ids:
+    - "faq.md#chunk0"
+    - "faq.md#chunk1"
+  collection: "kb_demo-tenant"
+  k: 5
+  metrics: ["recall@k", "mrr", "ndcg", "hit@k"]
+
+- case_id: product_inventory
+  query: "BGE-TSHIRT-001 有哪些颜色和尺码？库存多少？"
+  relevant_ids:
+    - "products.md#chunk0"
+  collection: "kb_demo-tenant"
+  k: 5
+  metrics: ["recall@k", "mrr", "ndcg", "hit@k", "precision@k"]
+
+- case_id: membership_discount
+  query: "会员等级和折扣是什么？怎么升级 Silver/Gold/Platinum？"
+  relevant_ids:
+    - "faq.md#chunk2"
+  collection: "kb_demo-tenant"
+  k: 5
+  metrics: ["recall@k", "mrr", "ndcg"]
+
+- case_id: after_sales_service
+  query: "收货后多久可以退货？不喜欢可以退吗？"
+  relevant_ids:
+    - "policy.md#chunk1"
+  collection: "kb_demo-tenant"
+  k: 5
+  metrics: ["recall@k", "mrr", "ndcg", "hit@k"]
+
+- case_id: cross_border_tariff
+  query: "跨境订单需要缴纳关税吗？发往哪些国家？"
+  relevant_ids:
+    - "faq.md#chunk0"
+  collection: "kb_demo-tenant"
+  k: 5
+  metrics: ["recall@k", "mrr", "ndcg", "hit@k"]
+
+- case_id: payment_methods
+  query: "支持哪些支付方式？PayPal 和 Apple Pay 可以用吗？"
+  relevant_ids:
+    - "faq.md#chunk1"
+  collection: "kb_demo-tenant"
+  k: 5
+  metrics: ["recall@k", "mrr", "ndcg", "hit@k", "ap"]
+
+- case_id: quality_issue_return
+  query: "商品有破损质量问题怎么办？谁承担运费？"
+  relevant_ids:
+    - "policy.md#chunk0"
+    - "faq.md#chunk2"
+  collection: "kb_demo-tenant"
+  k: 5
+  metrics: ["recall@k", "mrr", "ndcg", "hit@k", "ap", "precision@k"]
