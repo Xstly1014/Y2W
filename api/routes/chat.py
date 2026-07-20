@@ -9,7 +9,8 @@ SSE event types emitted on /stream:
     route       : router decision (route, route_reason, subagent_name)
     step_start  : a tool call / llm call / agent-think begins
     step_end    : the matching step ends (preview, latency_ms)
-    final       : the final answer (answer, trace_id, num_steps, ok)
+    action_card : Kiki-style "帮我操作" button (one event per button)
+    final       : the final answer (answer, trace_id, num_steps, ok, action_cards)
     summary     : aggregated stats (total_latency_ms, num_tools_called, ...)
     error       : failure (message, trace_id)
 
@@ -20,9 +21,13 @@ real time.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
+import threading
 import time
+from collections import OrderedDict
 from typing import Any, Iterator
 from uuid import uuid4
 
@@ -37,6 +42,144 @@ from skills.commerce import current_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+# --------------------------------------------------------------------------- #
+# Dynamic friendly-message generation (Kiki mode)
+# --------------------------------------------------------------------------- #
+# The hard-coded _friendly_for_tool mapping below is fast and reliable, but
+# the user asked for "in干什么就说什么" (whatever I'm doing, just say it) —
+# so we try to refine the static text with a short, fast LLM call the first
+# time a (tool_name, args_hash) pair is seen. The refined text is cached in
+# an OrderedDict (LRU, 512 entries) and reused for the lifetime of the
+# process. If the LLM call fails / times out, we fall back to the static
+# mapping. This costs ~80ms per unique tool+arg combo (LLM call) and 0ms
+# after that.
+#
+# NOTE: This is opt-in via env WEB_DYNAMIC_PROGRESS=1. Disabled by default
+# because most callers find the static mapping good enough and don't want
+# the extra LLM latency per tool call. The Kiki frontend layout itself
+# doesn't depend on this — the static mapping also produces Kiki-style
+# short Chinese phrases.
+_FRIENDLY_CACHE: OrderedDict[str, str] = OrderedDict()
+_FRIENDLY_CACHE_MAX = 512
+_FRIENDLY_CACHE_GUARD = threading.Lock()
+_FRIENDLY_RE_PATTERN = re.compile(r"[\[（(].{0,40}[\]）)]|[#*`>|]+")
+
+
+def _cache_get(key: str) -> str | None:
+    with _FRIENDLY_CACHE_GUARD:
+        if key in _FRIENDLY_CACHE:
+            _FRIENDLY_CACHE.move_to_end(key)
+            return _FRIENDLY_CACHE[key]
+    return None
+
+
+def _cache_set(key: str, value: str) -> None:
+    with _FRIENDLY_CACHE_GUARD:
+        _FRIENDLY_CACHE[key] = value
+        _FRIENDLY_CACHE.move_to_end(key)
+        while len(_FRIENDLY_CACHE) > _FRIENDLY_CACHE_MAX:
+            _FRIENDLY_CACHE.popitem(last=False)
+
+
+def _refine_friendly(tool_name: str, args: dict[str, Any], fallback: str) -> str:
+    """Try to produce a 8-15 char Chinese progress phrase via fast LLM.
+
+    Bounded: we don't await the LLM — we fire a background thread that
+    updates the cache for the NEXT time the same (tool, args) is seen.
+    The current step still uses the fallback, so this never adds
+    latency to the first call. After the first call, the cache hit
+    returns the refined text immediately.
+    """
+    if not getattr(settings, "web_dynamic_progress", False):
+        return fallback
+    # Build a stable key from tool name + sorted arg values.
+    try:
+        args_blob = json.dumps(args or {}, sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        args_blob = str(args)
+    key_src = f"{tool_name}|{args_blob}"
+    cache_key = hashlib.sha1(key_src.encode("utf-8")).hexdigest()
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    # Cache miss — fire-and-forget background refinement.
+    def _bg_refine() -> None:
+        try:
+            from api.deps import get_llm
+            llm = get_llm()
+            prompt = (
+                "你是一个 UI 进度提示生成器。给定一个工具调用，"
+                "生成一个 8-15 字的中文短句，告诉用户 agent 正在做什么。"
+                "风格：克制、专业、用户可读，不用 emoji。\n\n"
+                f"工具名：{tool_name}\n"
+                f"参数：{args_blob[:200]}\n\n"
+                "只输出短句本身，不要任何标点、解释、markdown 标记。"
+            )
+            from langchain_core.messages import HumanMessage
+            resp = llm.invoke([HumanMessage(content=prompt)])
+            text = (getattr(resp, "content", "") or "").strip()
+            # Strip any punctuation / brackets the LLM may have added.
+            text = _FRIENDLY_RE_PATTERN.sub("", text).strip()
+            # Hard cap to 20 chars.
+            if len(text) > 20:
+                text = text[:20]
+            if text and text != fallback:
+                _cache_set(cache_key, text)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("friendly refine failed for %s: %s", tool_name, exc)
+    threading.Thread(target=_bg_refine, daemon=True).start()
+    return fallback
+
+
+# --------------------------------------------------------------------------- #
+# [ACTION] block extraction (Kiki mode)
+# --------------------------------------------------------------------------- #
+_ACTION_RE = re.compile(r"\[ACTION\]\s*(\{.*?\})\s*\[/ACTION\]", re.DOTALL)
+
+
+def _extract_action_cards(answer: str) -> tuple[str, list[dict[str, str]]]:
+    """Pull [ACTION]…[/ACTION] blocks out of the agent's final answer.
+
+    Returns (cleaned_text, cards) where `cleaned_text` has all [ACTION]
+    blocks removed (so the visible bubble doesn't echo the JSON), and
+    `cards` is a list of validated action dicts. Invalid blocks are
+    silently dropped (logged as warning).
+    """
+    cards: list[dict[str, str]] = []
+    if not answer or "[ACTION]" not in answer:
+        return answer or "", cards
+    seen_ids: set[str] = set()
+
+    def _repl(m: re.Match[str]) -> str:
+        try:
+            obj = json.loads(m.group(1))
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.warning("invalid [ACTION] JSON: %s; raw=%r", exc, m.group(1)[:80])
+            return ""
+        if not isinstance(obj, dict):
+            return ""
+        aid = str(obj.get("id", "")).strip()
+        label = str(obj.get("label", "")).strip()
+        prompt = str(obj.get("prompt", "")).strip()
+        if not aid or not label or not prompt:
+            return ""
+        # id pattern: ^[a-z][a-z0-9-]{1,40}$
+        if not re.match(r"^[a-z][a-z0-9-]{1,40}$", aid):
+            logger.warning("invalid [ACTION] id format: %r", aid)
+            return ""
+        if len(label) > 16:
+            label = label[:16]
+        if len(prompt) > 500:
+            prompt = prompt[:500]
+        if aid in seen_ids:
+            return ""
+        seen_ids.add(aid)
+        cards.append({"id": aid, "label": label, "prompt": prompt})
+        return ""
+
+    cleaned = _ACTION_RE.sub(_repl, answer).strip()
+    return cleaned, cards
 
 
 def _resolve_tenant(req: ChatRequest, x_tenant_id: str | None) -> str:
@@ -69,8 +212,20 @@ def _new_thread_id(tenant_id: str) -> str:
 # Non-streaming chat
 # --------------------------------------------------------------------------- #
 @router.post("")
-def chat(req: ChatRequest, x_tenant_id: str | None = Header(default=None)) -> dict[str, Any]:
-    """Non-streaming chat. Returns final answer + trace metadata."""
+async def chat(
+    req: ChatRequest, x_tenant_id: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Non-streaming chat. Returns final answer + trace metadata.
+
+    NOTE: this endpoint is `async def` because the multi-agent graph
+    declares its router node as `async def router_node` (see
+    `core/multi_agent.py` and the P0-2 rationale in
+    `optimization_logs/2026-07-20/issues-and-fixes.md`). A sync
+    `agent.stream()` call would fail with "No synchronous function
+    provided to router" — we must drive the graph via `astream()`.
+    Sync `get_state` is short-lived (no LLM call) so it's safe to call
+    directly from the event loop.
+    """
     try:
         tenant_id = _resolve_tenant(req, x_tenant_id)
     except ValueError as exc:
@@ -86,8 +241,9 @@ def chat(req: ChatRequest, x_tenant_id: str | None = Header(default=None)) -> di
         )
         recorder.user_input = req.message
         final_answer = ""
+        action_cards: list[dict[str, str]] = []
         try:
-            for event in agent.stream(
+            async for event in agent.astream(
                 {"messages": [("user", req.message)]},
                 config={"configurable": {"thread_id": thread_id}},
                 stream_mode="updates",
@@ -108,6 +264,9 @@ def chat(req: ChatRequest, x_tenant_id: str | None = Header(default=None)) -> di
                         break
                 else:
                     final_answer = getattr(msgs[-1], "content", str(msgs[-1]))
+            # Kiki-mode: pull [ACTION]…[/ACTION] blocks out of the final
+            # answer so the visible answer doesn't echo the JSON payload.
+            final_answer, action_cards = _extract_action_cards(final_answer)
         except Exception as exc:  # noqa: BLE001
             logger.exception("agent stream failed")
             recorder.finalize(final_answer, error=f"{type(exc).__name__}: {exc}")
@@ -118,6 +277,7 @@ def chat(req: ChatRequest, x_tenant_id: str | None = Header(default=None)) -> di
                 "tenant_id": tenant_id,
                 "num_steps": len(recorder.steps),
                 "ok": False,
+                "action_cards": [],
             }
         recorder.finalize(final_answer)
         return {
@@ -127,6 +287,7 @@ def chat(req: ChatRequest, x_tenant_id: str | None = Header(default=None)) -> di
             "tenant_id": tenant_id,
             "num_steps": len(recorder.steps),
             "ok": True,
+            "action_cards": action_cards,
         }
     finally:
         current_tenant_id.reset(token)
@@ -273,15 +434,26 @@ def chat_stream(
                             break
                     else:
                         final_answer = getattr(msgs[-1], "content", str(msgs[-1]))
-                recorder.finalize(final_answer)
+                # Kiki-mode: pull [ACTION]…[/ACTION] blocks out of the final
+                # answer. We also emit one `action_card` SSE event per card
+                # so the front end can render each button the moment it's
+                # known (without waiting for `summary` to drain).
+                visible_answer, action_cards = _extract_action_cards(final_answer)
+                for card in action_cards:
+                    yield {
+                        "event": "action_card",
+                        "data": json.dumps(card, ensure_ascii=False),
+                    }
+                recorder.finalize(visible_answer)
                 yield {
                     "event": "final",
                     "data": json.dumps(
                         {
-                            "answer": final_answer,
+                            "answer": visible_answer,
                             "trace_id": recorder.trace_id,
                             "num_steps": len(recorder.steps),
                             "ok": True,
+                            "action_cards": action_cards,
                         },
                         ensure_ascii=False,
                     ),
@@ -415,6 +587,28 @@ def _friendly_for_tool(name: str, args: dict[str, Any]) -> str:
         return "正在获取当前时间..."
     if name == "search":
         return "正在搜索..."
+    # --- web_ops tools (Kiki mode: AI operates web pages) ---
+    if name == "web_open_url":
+        url = a.get("url") or ""
+        return f"正在打开网页 {url[:40]}..." if url else "正在打开网页..."
+    if name == "web_extract_text":
+        return "正在提取页面内容..."
+    if name == "web_list_links":
+        return "正在查看页面有哪些可点击的链接..."
+    if name == "web_click":
+        tgt = a.get("target") or ""
+        return f"正在点击「{tgt[:20]}」..." if tgt else "正在点击页面元素..."
+    if name == "web_fill":
+        sel = a.get("selector") or ""
+        return f"正在填写表单 {sel[:20]}..." if sel else "正在填写表单..."
+    if name == "web_press_key":
+        key = a.get("key") or ""
+        return f"正在按键 {key}..." if key else "正在按键..."
+    if name == "web_wait_for":
+        tgt = a.get("target") or ""
+        return f"正在等待「{tgt[:20]}」出现..." if tgt else "正在等待页面元素..."
+    if name == "web_screenshot":
+        return "正在截图..."
     return f"正在执行 {name}..."
 
 
@@ -424,6 +618,18 @@ _SUBAGENT_FRIENDLY: dict[str, str] = {
     "escalation": "正在升级到人工客服...",
     "router": "正在判断你的请求应该由哪位专员处理...",
 }
+
+
+def _friendly_progress(tool_name: str, args: dict[str, Any]) -> str:
+    """Return the Kiki-style progress phrase for a tool call.
+
+    Uses the static mapping by default; if `WEB_DYNAMIC_PROGRESS=1`,
+    tries to refine it via background LLM (first call returns the
+    fallback, subsequent same-(tool,args) calls return the refined text
+    from the LRU cache).
+    """
+    fallback = _friendly_for_tool(tool_name, args)
+    return _refine_friendly(tool_name, args, fallback)
 
 
 class _StreamCtx:
@@ -445,6 +651,15 @@ class _StreamCtx:
         # the tool call, so the ToolMessage handler can record them in the
         # trace (ToolMessage itself only carries the result, not the args).
         self.tool_args: dict[str, dict[str, Any]] = {}
+        # Kiki multi-turn: LLM can emit visible text (an interim answer)
+        # ALONGSIDE tool_calls in the same ReAct turn. Streaming chunks
+        # deliver content first, then tool_call chunks. We accumulate
+        # content here; when a tool_call chunk arrives we flush the buffer
+        # as an `interim_answer` event (so the front-end renders a mid-
+        # conversation AI bubble before the next step starts). Content
+        # that never gets flushed is the final answer (handled by the
+        # `final` event from graph state).
+        self.interim_buffer: str = ""
         # Timestamp of the last message we fully processed. Used to estimate
         # LLM-call latency as the delta between consecutive messages. The
         # first message (user input) has no prior message, so we seed it
@@ -575,6 +790,16 @@ def _iter_message_events(
         tool_calls = getattr(msg, "tool_calls", None) or []
         content = getattr(msg, "content", "") or ""
         if tool_calls:
+            # Kiki multi-turn: if content was accumulated before this
+            # tool_call chunk, flush it as an interim_answer so the
+            # front-end renders a visible AI bubble BEFORE the tool
+            # runs (e.g. "我找到了活动页，下面帮你看看有哪些可以领取").
+            if ctx.interim_buffer.strip():
+                yield (
+                    "interim_answer",
+                    {"answer": ctx.interim_buffer.strip(), "node": node_name},
+                )
+                ctx.interim_buffer = ""
             # LLM decided to call one or more tools — emit a step_start
             # for each tool call the instant the decision is made.
             for tc in tool_calls:
@@ -597,7 +822,7 @@ def _iter_message_events(
                     {
                         "step_id": step_id,
                         "step_type": "tool_call",
-                        "friendly_message": _friendly_for_tool(
+                        "friendly_message": _friendly_progress(
                             tc.get("name", "unknown"), tc.get("args", {}) or {}
                         ),
                         "tool_name": tc.get("name", "unknown"),
@@ -606,13 +831,13 @@ def _iter_message_events(
                     },
                 )
         elif content:
-            # Final-answer token chunk — emit a `token` event for optional
-            # streaming text display. Front-end can ignore if it prefers
-            # to wait for the `final` event + typing animation.
-            yield (
-                "token",
-                {"content": str(content), "node": node_name},
-            )
+            # Accumulate content chunks into the interim buffer. This
+            # text is EITHER an interim answer (if a tool_call chunk
+            # follows later) OR the final answer (handled by the `final`
+            # event from graph state, not from this buffer). We buffer
+            # instead of emitting `token` events because the front-end
+            # renders interim/final answers as complete bubbles.
+            ctx.interim_buffer += str(content)
         return
 
     if msg_type in {"ai", "aimessage"}:
@@ -631,6 +856,32 @@ def _iter_message_events(
         ctx.mark_msg_done()
 
         if tool_calls:
+            # Kiki multi-turn: flush any accumulated interim content.
+            # For non-streaming providers (no chunks), the complete
+            # AIMessage carries both content + tool_calls — the content
+            # IS the interim answer. For streaming providers, chunks
+            # already buffered the content; the complete message is a
+            # duplicate (all tc_ids already pending) so we only flush
+            # the buffer without double-counting content.
+            has_new_tc = any(
+                not (isinstance(tc, dict) and tc.get("id")
+                     and tc.get("id") in ctx.pending_tool_steps)
+                for tc in tool_calls
+            )
+            interim_text = ctx.interim_buffer.strip()
+            ctx.interim_buffer = ""
+            if has_new_tc and content.strip():
+                # Non-streaming provider: content is right here in the
+                # complete message.
+                interim_text = (
+                    (interim_text + "\n" + content).strip()
+                    if interim_text else content.strip()
+                )
+            if interim_text:
+                yield (
+                    "interim_answer",
+                    {"answer": interim_text, "node": node_name},
+                )
             # Complete AIMessage with tool_calls. If we already emitted
             # step_start from a chunk, skip (avoid duplicates). Otherwise
             # emit step_start for each tool call.
@@ -653,7 +904,7 @@ def _iter_message_events(
                     {
                         "step_id": step_id,
                         "step_type": "tool_call",
-                        "friendly_message": _friendly_for_tool(
+                        "friendly_message": _friendly_progress(
                             tc.get("name", "unknown"), tc.get("args", {}) or {}
                         ),
                         "tool_name": tc.get("name", "unknown"),
@@ -665,6 +916,9 @@ def _iter_message_events(
             # Final-answer AIMessage (no tool_calls alongside) — emit a
             # paired llm_call step_start + step_end. This covers the case
             # where the LLM provider doesn't stream tokens (no chunks).
+            # Discard any interim buffer: the final answer comes from
+            # graph state (the `final` event), not from streamed chunks.
+            ctx.interim_buffer = ""
             step_id = ctx.next_step_id()
             ctx.start_times[step_id] = time.time()
             ctx.num_steps += 1

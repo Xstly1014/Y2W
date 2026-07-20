@@ -446,12 +446,22 @@ a:hover { color: var(--color-primary-hover); }
   word-wrap: break-word;
   word-break: break-word;
   position: relative;
+  /* Default (AI bubble) min/max so very short answers still look like a
+     bubble, while long ones don't stretch past ~70% of the chat column. */
+  min-width: 60px;
+  max-width: min(720px, 70%);
 }
 .msg-bubble.user {
   background: var(--color-primary-gradient);
   color: #fff;
   border-bottom-right-radius: var(--radius-sm);
   box-shadow: 0 4px 12px rgba(13, 148, 136, 0.2);
+  /* User bubble: short questions should still feel like a chat bubble,
+     not a sliver. min-width 80px; padding bumped slightly for visual
+     weight (was 12px x 16px, now 13px x 18px). */
+  min-width: 80px;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-md);
 }
 .msg-bubble.ai {
   background: var(--color-bg-elevated);
@@ -475,6 +485,19 @@ a:hover { color: var(--color-primary-hover); }
 }
 .msg-bubble.ai.markdown {
   max-width: 100%;
+}
+/* Kiki multi-turn: interim answer bubbles shown between the thinking
+   card and the final answer. Slightly smaller font + reduced opacity
+   so the user can visually distinguish "mid-conversation" updates from
+   the final answer. */
+.msg-bubble.interim-answer {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-3);
+  opacity: 0.92;
+}
+.msg-bubble.interim-answer::before {
+  opacity: 0.4;
 }
 .msg-bubble.ai.markdown p {
   margin-bottom: var(--space-3);
@@ -643,7 +666,7 @@ a:hover { color: var(--color-primary-hover); }
   30% { transform: translateY(-6px); opacity: 1; }
 }
 
-/* ---------- Thinking card ---------- */
+/* ---------- Thinking card (Kiki-style progress list) ---------- */
 .thinking-card {
   background: var(--color-thinking-bg);
   border: 1px solid var(--color-thinking-border);
@@ -653,6 +676,9 @@ a:hover { color: var(--color-primary-hover); }
   width: 100%;
   max-width: 640px;
 }
+/* Kiki-style: progress list is open by default (no need to click to
+   expand). Header still clickable for power users who want a tidier
+   view. */
 .thinking-card-header {
   display: flex;
   align-items: center;
@@ -693,6 +719,7 @@ a:hover { color: var(--color-primary-hover); }
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   margin-top: 1px;
+  color: var(--color-text-tertiary);
 }
 .step-icon .check { color: var(--color-success); }
 .spinner {
@@ -705,24 +732,15 @@ a:hover { color: var(--color-primary-hover); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .step-body {
   flex: 1; min-width: 0;
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: 1.55;
 }
-.step-tag {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  font-size: 10px;
-  font-weight: 600;
-  font-family: var(--font-mono);
-  margin-right: var(--space-1);
-  letter-spacing: 0.5px;
-}
-.step-tag.tool { background: #dbeafe; color: #1e40af; }
-.step-tag.llm { background: #fce7f3; color: #9d174d; }
-.step-tag.think { background: #fef3c7; color: #92400e; }
-.step-tag.route { background: #d1fae5; color: #065f46; }
+/* Kiki-style: hide the colored TOOL/LLM/THINK tags; the message text
+   alone describes what the agent is doing. */
+.step-body .step-tag { display: none; }
 .step-message { color: var(--color-text); }
+.step-message.pending { color: var(--color-text-tertiary); }
 .step-meta {
   font-size: 10px; color: var(--color-text-muted);
   font-family: var(--font-mono);
@@ -747,6 +765,67 @@ a:hover { color: var(--color-primary-hover); }
   word-break: break-word;
   max-height: 200px;
   overflow-y: auto;
+}
+
+/* ---------- Action card (Kiki-style "帮我操作" buttons) ---------- */
+.action-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  width: 100%;
+  max-width: 720px;
+}
+.action-card-hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+.action-card-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.action-card-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border: none;
+  border-radius: 999px;
+  background: var(--color-primary-gradient);
+  color: #fff;
+  font-size: var(--text-md);
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.25);
+  transition: transform var(--transition), box-shadow var(--transition), filter var(--transition);
+  user-select: none;
+}
+.action-card-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(13, 148, 136, 0.32);
+  filter: brightness(1.05);
+}
+.action-card-btn:active {
+  transform: translateY(0);
+  filter: brightness(0.97);
+}
+.action-card-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+.action-card-btn .sparkle {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-lg);
+  line-height: 1;
+}
+.action-card-btn.clicked {
+  background: var(--color-success);
+  box-shadow: 0 2px 6px rgba(5, 150, 105, 0.2);
 }
 
 /* Route banner */
@@ -1503,24 +1582,34 @@ function buildThinkingCard(steps, totalLatencyMs, collapsed = false) {
   return card;
 }
 
+// Kiki-style per-step row: small magnifier icon, single line of
+// friendly Chinese, no TOOL/LLM/THINK tag. The step-icon shows a
+// magnifier while pending and a green check once done.
+const MAGNIFIER_SVG = '<svg class="magnifier" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.65" y2="16.65"></line></svg>';
+const CHECK_SVG = '<svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+const SPINNER_SVG = '<div class="spinner"></div>';
+
 function buildThinkingStep(step) {
   const el = document.createElement('div');
   el.className = 'thinking-step' + (step.done ? ' done' : '');
-  const tagClass = step.step_type === 'tool_call' ? 'tool' :
-                   step.step_type === 'llm_call' ? 'llm' :
-                   step.step_type === 'agent_think' ? 'think' : 'route';
-  const tagText = step.step_type === 'tool_call' ? 'TOOL' :
-                  step.step_type === 'llm_call' ? 'LLM' :
-                  step.step_type === 'agent_think' ? 'THINK' : 'STEP';
+  // Kiki uses a magnifier icon for both pending and done states (just
+  // with a tick on done). We use a spinner only when there's NO message
+  // text yet (true first-load state) — once a message appears, switch
+  // to magnifier to match the reference design.
+  const hasText = !!(step.friendly_message && step.friendly_message.length);
+  let iconHtml;
+  if (step.done) {
+    iconHtml = CHECK_SVG;
+  } else if (hasText) {
+    iconHtml = MAGNIFIER_SVG;
+  } else {
+    iconHtml = SPINNER_SVG;
+  }
+  const messageClass = 'step-message' + (step.done ? '' : ' pending');
   el.innerHTML = `
-    <div class="step-icon">
-      ${step.done
-        ? '<svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'
-        : '<div class="spinner"></div>'}
-    </div>
+    <div class="step-icon">${iconHtml}</div>
     <div class="step-body">
-      <span class="step-tag ${tagClass}">${tagText}</span>
-      <span class="step-message">${escapeHtml(step.friendly_message || '')}</span>
+      <span class="${messageClass}">${escapeHtml(step.friendly_message || '处理中...')}</span>
       ${step.latency_ms != null && step.done ? `<div class="step-meta">${step.latency_ms.toFixed(0)} ms</div>` : ''}
       ${step.tool_args && Object.keys(step.tool_args).length > 0 ? `<div class="step-toggle">查看参数</div><div class="step-detail" style="display:none;">${escapeHtml(JSON.stringify(step.tool_args, null, 2))}</div>` : ''}
       ${step.preview ? `<div class="step-toggle">查看结果</div><div class="step-detail" style="display:none;">${escapeHtml(step.preview)}</div>` : ''}
@@ -1539,6 +1628,55 @@ function buildThinkingStep(step) {
     });
   });
   return el;
+}
+
+// Kiki-style: remove [ACTION]…[/ACTION] blocks from the agent's raw
+// text so the visible bubble doesn't echo the JSON payload.
+function stripActionBlocks(text) {
+  if (!text) return '';
+  return text.replace(/\[ACTION\][\s\S]*?\[\/ACTION\]/g, '').trim();
+}
+
+// Kiki-style action card: a small block of one or more pill-shaped
+// buttons below the bubble. Clicking a button submits its `prompt` as
+// the next user turn, so the agent can continue the workflow.
+function buildActionCard(cards, contentWrap) {
+  const wrap = document.createElement('div');
+  wrap.className = 'action-card';
+  const hint = document.createElement('div');
+  hint.className = 'action-card-hint';
+  hint.textContent = '需要我自动执行吗？点击下方按钮继续。';
+  wrap.appendChild(hint);
+  const buttons = document.createElement('div');
+  buttons.className = 'action-card-buttons';
+  for (const card of cards) {
+    const btn = document.createElement('button');
+    btn.className = 'action-card-btn';
+    btn.dataset.actionId = card.id;
+    btn.dataset.actionPrompt = card.prompt;
+    btn.innerHTML = `
+      <span class="sparkle">✦</span>
+      <span class="label">${escapeHtml(card.label)}</span>
+    `;
+    btn.addEventListener('click', () => {
+      // Visual click feedback (turn green + disable siblings).
+      btn.classList.add('clicked');
+      btn.disabled = true;
+      buttons.querySelectorAll('.action-card-btn').forEach(b => {
+        if (b !== btn) b.disabled = true;
+      });
+      // Submit the action's prompt as the next user turn.
+      const promptText = card.prompt;
+      const inputBox = document.getElementById('input-box');
+      if (inputBox) {
+        inputBox.value = promptText;
+      }
+      sendMessage(promptText);
+    });
+    buttons.appendChild(btn);
+  }
+  wrap.appendChild(buttons);
+  return wrap;
 }
 
 function buildSummaryCard(meta) {
@@ -1581,9 +1719,10 @@ async function sendMessage(text) {
   // Append AI message placeholder (streaming)
   const aiMsg = appendMessage('ai', '', { streaming: true });
   const contentWrap = aiMsg.querySelector('.msg-content');
-  // Insert thinking card container before bubble
+  // Kiki-style: progress list is open by default (no `collapsed` class).
+  // The header still toggles collapse on click for power users.
   const thinkingCard = document.createElement('div');
-  thinkingCard.className = 'thinking-card collapsed';
+  thinkingCard.className = 'thinking-card';
   thinkingCard.innerHTML = `
     <div class="thinking-card-header">
       <div class="header-left">
@@ -1610,6 +1749,10 @@ async function sendMessage(text) {
   let totalLatencyMs = 0;
   let errorMsg = null;
   let routeInfo = null;
+  // Kiki-style action cards collected from the agent's [ACTION] blocks.
+  // Rendered below the bubble once streaming ends. Clicking a button
+  // submits the action's `prompt` as the next user turn.
+  let actionCards = [];
 
   try {
     state.abortController = new AbortController();
@@ -1659,6 +1802,7 @@ async function sendMessage(text) {
         if (result.totalLatencyMs != null) totalLatencyMs = result.totalLatencyMs;
         if (result.errorMsg) errorMsg = result.errorMsg;
         if (result.routeInfo) routeInfo = result.routeInfo;
+        if (result.actionCards) actionCards = actionCards.concat(result.actionCards);
       }
     }
     // Process any trailing event in buffer
@@ -1674,6 +1818,7 @@ async function sendMessage(text) {
         if (result.totalLatencyMs != null) totalLatencyMs = result.totalLatencyMs;
         if (result.errorMsg) errorMsg = result.errorMsg;
         if (result.routeInfo) routeInfo = result.routeInfo;
+        if (result.actionCards) actionCards = actionCards.concat(result.actionCards);
       }
     }
   } catch (e) {
@@ -1693,7 +1838,11 @@ async function sendMessage(text) {
   if (errorMsg && !finalAnswer) {
     bubble.innerHTML = `<span style="color: var(--color-danger);">回复失败：${escapeHtml(errorMsg)}</span>`;
   } else if (finalAnswer) {
-    bubble.innerHTML = renderMarkdown(finalAnswer);
+    // Strip any [ACTION]…[/ACTION] blocks from the rendered text — the
+    // action cards are rendered as separate buttons below. We keep the
+    // raw text in `finalAnswer` for the copy button.
+    const visibleText = stripActionBlocks(finalAnswer);
+    bubble.innerHTML = renderMarkdown(visibleText);
     bubble.classList.add('markdown');
     enhanceCodeBlocks(bubble);
   } else {
@@ -1702,6 +1851,13 @@ async function sendMessage(text) {
 
   // Finalize summary
   summaryEl.textContent = `${numSteps} 步 · ${numTools} 工具 · ${numLlm} 推理 · ${(totalLatencyMs / 1000).toFixed(1)}s`;
+
+  // Kiki-style action card (rendered after the bubble, before the
+  // summary + feedback row). Only show if we actually have cards.
+  if (actionCards.length > 0) {
+    const ac = buildActionCard(actionCards, contentWrap);
+    contentWrap.appendChild(ac);
+  }
 
   // Add summary card + feedback buttons
   if (finalAnswer && traceId) {
@@ -1756,7 +1912,17 @@ function parseSSEEvent(raw) {
 }
 
 function handleSSEEvent(evt, ctx) {
-  const result = { finalAnswer: undefined, traceId: null, numSteps: null, numTools: null, numLlm: null, totalLatencyMs: null, errorMsg: null, routeInfo: null };
+  const result = {
+    finalAnswer: undefined,
+    traceId: null,
+    numSteps: null,
+    numTools: null,
+    numLlm: null,
+    totalLatencyMs: null,
+    errorMsg: null,
+    routeInfo: null,
+    actionCards: undefined,  // Kiki-style: action buttons collected per event
+  };
   const { stepsContainer, summaryEl, bubble, contentWrap } = ctx;
 
   switch (evt.event) {
@@ -1846,7 +2012,41 @@ function handleSSEEvent(evt, ctx) {
       result.finalAnswer = data.answer || '';
       result.traceId = data.trace_id;
       result.numSteps = data.num_steps;
+      // Backend can attach action_cards to the final event so the front
+      // end renders Kiki-style "帮我操作" buttons after streaming.
+      if (Array.isArray(data.action_cards) && data.action_cards.length) {
+        result.actionCards = data.action_cards;
+      }
       if (data.ok === false) result.errorMsg = 'agent 返回失败';
+      break;
+    }
+    case 'interim_answer': {
+      // Kiki multi-turn: a mid-conversation AI bubble rendered between
+      // the thinking card and the final answer. The agent emits this
+      // when it outputs visible text alongside a tool_call (e.g. "我
+      // 找到了活动页，下面帮你看看有哪些可以领取"). Multiple interim
+      // answers can appear in a single turn (2-step, 3-step, ...).
+      const data = evt.data;
+      const interim = document.createElement('div');
+      interim.className = 'msg-bubble ai interim-answer markdown';
+      interim.innerHTML = renderMarkdown(data.answer || '');
+      // Insert before the final bubble (after the thinking card).
+      ctx.bubble.parentElement.insertBefore(interim, ctx.bubble);
+      break;
+    }
+    case 'action_card': {
+      // Streaming variant: emitted separately from `final` so the
+      // button can appear the instant the LLM finishes the [ACTION]
+      // block, without waiting for the SSE stream to drain.
+      const data = evt.data;
+      if (data && data.id && data.label && data.prompt) {
+        if (!result.actionCards) result.actionCards = [];
+        result.actionCards.push({
+          id: data.id,
+          label: data.label,
+          prompt: data.prompt,
+        });
+      }
       break;
     }
     case 'summary': {

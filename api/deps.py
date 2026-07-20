@@ -29,6 +29,7 @@ from skills.code_review import CodeReviewSkill
 from skills.data_analysis import DataAnalysisSkill
 from skills.summarize import SummarizeSkill
 from skills.translator import TranslatorSkill
+from skills.web_ops import WebOpsSkill
 from tools import get_builtin_tools
 
 logger = logging.getLogger(__name__)
@@ -120,16 +121,22 @@ def get_agent_for_tenant(tenant_id: str) -> Any:
         indexer = get_indexer()
         rag_tool = build_rag_tool(indexer, collection=tenant_collection(tenant_id))
 
-        # Order-ops sub-agent: builtin tools + commerce skills.
+        # Order-ops sub-agent: builtin tools + commerce skills + web_ops
+        # (so the agent can, for example, "go to the carrier site and check
+        # the tracking timeline visually" or "redeem the coupon on the
+        # activity page for me").
         order_tools: list[BaseTool] = [
             *get_builtin_tools(),
             *CommerceSkills().get_tools(),
+            *WebOpsSkill().get_tools(),
         ]
         # Knowledge sub-agent: RAG retriever + summarize skill + translator
         # (cross-border commerce serves multilingual buyers) + long-term
         # memory tools (save_memory / recall_memory) so the agent can persist
         # user facts/preferences across sessions + code review / data analysis
-        # skills (extended capabilities for power users who paste code or CSV).
+        # skills (extended capabilities for power users who paste code or CSV)
+        # + web_ops (so knowledge Q&A can "go check the page" instead of
+        # only relying on the local RAG corpus).
         memory_tools = build_memory_tools(get_long_term_memory())
         knowledge_tools: list[BaseTool] = [
             rag_tool,
@@ -137,6 +144,7 @@ def get_agent_for_tenant(tenant_id: str) -> Any:
             *TranslatorSkill(llm).get_tools(),
             *CodeReviewSkill(llm).get_tools(),
             *DataAnalysisSkill().get_tools(),
+            *WebOpsSkill().get_tools(),
             *memory_tools,
         ]
         agent = build_multi_agent(

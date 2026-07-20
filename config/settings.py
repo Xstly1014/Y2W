@@ -172,6 +172,15 @@ class Settings(BaseSettings):
         default=256, alias="LLM_PROMPT_CACHE_MAX_SIZE",
         description="Max entries in the in-memory LRU cache.",
     )
+    web_dynamic_progress: bool = Field(
+        default=False, alias="WEB_DYNAMIC_PROGRESS",
+        description=(
+            "Use a background LLM call to refine tool-call progress "
+            "messages instead of the static friendly-text mapping. Adds "
+            "~80ms per first-seen (tool, args) pair; subsequent calls "
+            "are instant from the LRU cache. Opt-in."
+        ),
+    )
     llm_prompt_cache_disk_path: Path | None = Field(
         default=None, alias="LLM_PROMPT_CACHE_DISK_PATH",
         description="Optional disk cache path. None = memory only.",
