@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     )
     llm_model_name: str = Field(default="gpt-4o-mini", alias="LLM_MODEL_NAME")
     llm_temperature: float = Field(default=0.0, alias="LLM_TEMPERATURE")
+    # When 1, build_llm() returns a local mock chat model that simulates
+    # the router + sub-agent decisions by matching keywords in the user
+    # message. Used for local demos when the upstream LLM API token is
+    # unavailable / quota-exceeded (e.g. 401 from the provider). Set
+    # LLM_MOCK=1 in .env to enable. The mock still drives the real
+    # ReAct tool loop (query_order / query_logistics / rag_search / web
+    # tools), so end-to-end UX is identical to a live LLM.
+    llm_mock: bool = Field(default=False, alias="LLM_MOCK")
 
     # ----- Embedding -----
     embedding_model_name: str = Field(

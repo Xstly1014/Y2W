@@ -891,7 +891,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   max-width: 100%;
 }
 .cs-message-ai { align-self: stretch; }
-.cs-message-self { align-self: flex-end; flex-direction: row-reverse; max-width: 88%; }
+.cs-message-self { align-self: flex-end; flex-direction: row-reverse; max-width: 96%; }
 /* Avatars */
 .cs-msg-avatar {
   width: 34px; height: 34px; border-radius: 50%;
@@ -2709,17 +2709,20 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 
 /* (5) User message bubble (right-aligned red gradient). The previous
    template never actually rendered this — the welcome-card v-if
-   swallowed the role check. Now wrapped in role === 'user'. */
+   swallowed the role check. Now wrapped in role === 'user'.
+   Sizing: 92% max-width + 10/14 padding + 14px font so short Chinese
+   questions like "查询订单 1001" fit on a single line instead of
+   wrapping awkwardly mid-phrase. */
 .cs-message-self-bubble {
   background: var(--color-primary-gradient);
   color: white;
-  padding: 8px 12px;
-  border-radius: 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
   border-top-right-radius: 4px;
-  font-size: 13px; line-height: 1.5;
+  font-size: 14px; line-height: 1.55;
   word-break: break-word;
   white-space: pre-wrap;
-  max-width: 80%;
+  max-width: 92%;
   box-shadow: 0 2px 6px -2px rgba(255, 59, 48, 0.3);
 }
 

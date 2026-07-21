@@ -662,7 +662,23 @@
               // Render it immediately as a small bubble so the user sees
               // the agent's narration BEFORE the tool runs. Multiple
               // interim answers can appear in a single turn.
+              //
+              // De-dup: if the LLM echoed the in-flight step's
+              // friendly_message (very common — ReAct agents often
+              // prefix a tool call with "正在查询订单 1001 状态...",
+              // which is already shown in the progress card), drop
+              // the duplicate so the user only sees the message once.
               if (data && data.answer) {
+                const norm = (s) => String(s || '')
+                  .replace(/[.\u2026\u3002\uff0c\uff01\uff1f]+$/g, '')
+                  .trim();
+                const incoming = norm(data.answer);
+                const lastStep = (aiMsg.reasoning || []).slice(-1)[0];
+                const lastMsg = lastStep ? norm(lastStep.friendly_message) : '';
+                if (incoming && incoming === lastMsg) {
+                  // Already shown as the running step — skip.
+                  return;
+                }
                 aiMsg.interimAnswers.push(data.answer);
                 nextTickScroll();
               }
@@ -834,6 +850,52 @@
         send();
       }
 
+      // Kiki action card click handler. The agent's [ACTION] blocks emit
+      // {id, label, prompt} cards (e.g. "查看物流" / "申请退款"). Without
+      // this handler, clicking a card was a silent no-op because the
+      // template referenced `sendMessage(...)` which never existed in
+      // setup() — only `send()` does. The agent can't always actually
+      // click a browser button for the user (Playwright is heavy and
+      // not always wired), so we degrade gracefully:
+      //   1. If the card has an `href` (set by the agent's prompt), do a
+      //      proper SPA navigation via vue-router.
+      //   2. Otherwise, hand the card's `prompt` to the chat as a new
+      //      user turn, so the LLM can answer / take the next step.
+      //   3. As a last-resort UX affordance, if the label is something
+      //      the user almost certainly wants to do (查询物流 / 申请退款
+      //      / 查看订单 / 联系客服), jump them to the matching page so
+      //      they get *some* forward motion even before the LLM wakes
+      //      back up.
+      function onActionCard(card) {
+        if (sending.value) return;
+        if (!card) return;
+        // (1) Explicit href: pure navigation.
+        if (card.href) {
+          try { router.push(card.href); } catch (e) { window.location.href = card.href; }
+          return;
+        }
+        // (2) Last-resort label → route mapping, so the button is never
+        //     a no-op even if the LLM hasn't filled in `href`.
+        const label = String(card.label || '').trim();
+        const navByLabel = {
+          '查看物流': '/orders',
+          '查看我的订单': '/orders',
+          '打开我的订单列表': '/orders',
+          '申请退款': '/orders',
+          '联系人工客服': '/orders',
+          '联系客服': '/orders',
+        };
+        if (label && navByLabel[label]) {
+          try { router.push(navByLabel[label]); } catch (e) { window.location.href = navByLabel[label]; }
+          return;
+        }
+        // (3) Default: send the prompt back to the agent as a follow-up.
+        if (card.prompt) {
+          input.value = card.prompt;
+          send();
+        }
+      }
+
       function toggleReasoning(msg) {
         msg.reasoningExpanded = !msg.reasoningExpanded;
       }
@@ -864,6 +926,10 @@
         mode, MODES, currentMode, modeMenuOpen, toggleModeMenu, selectMode, closeModeMenu, setMode, dark, toggleDark,
         toggle, send, sendFeedback, renderMarkdown, toggleReasoning,
         applySuggestion, runFollowUp, runPrimaryAction,
+        // Kiki action cards: forward to onActionCard so clicking "查看物流"
+        // / "申请退款" / etc. actually does something (was a no-op bug —
+        // template referenced `sendMessage` but setup only exposed `send`).
+        onActionCard,
         // Drag-to-move
         widgetRoot, panelStyle, startDrag, dragging,
         // New conversation
@@ -1049,7 +1115,7 @@
                       :key="card.id"
                       class="cs-action-card-btn"
                       :disabled="sending"
-                      @click="sendMessage(card.prompt)"
+                      @click="onActionCard(card)"
                     >
                       <span class="cs-action-card-sparkle">✦</span>
                       <span class="cs-action-card-label">{{ card.label }}</span>

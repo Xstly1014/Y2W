@@ -985,11 +985,29 @@ def _iter_message_events(
             # front-end renders a visible AI bubble BEFORE the tool
             # runs (e.g. "我找到了活动页，下面帮你看看有哪些可以领取").
             if ctx.interim_buffer.strip():
-                yield (
-                    "interim_answer",
-                    {"answer": ctx.interim_buffer.strip(), "node": node_name},
-                )
-                ctx.interim_buffer = ""
+                # De-dup: if the buffered interim text matches the
+                # friendly_progress of the upcoming tool call exactly,
+                # skip flushing. The progress card already surfaces
+                # the phrase; rendering an extra interim bubble just
+                # duplicates it. The mock LLM emits "narration" as
+                # both the AIMessage content AND gets translated to
+                # the same friendly_progress by _friendly_for_tool.
+                norm = lambda s: re.sub(r'[。…，！？.,!?]+$', '', s).strip()
+                first_tc = next((t for t in tool_calls if isinstance(t, dict)), None)
+                next_friendly = ""
+                if first_tc:
+                    next_friendly = norm(_friendly_progress(
+                        first_tc.get("name", "unknown"),
+                        first_tc.get("args", {}) or {},
+                    ))
+                if norm(ctx.interim_buffer) == next_friendly:
+                    ctx.interim_buffer = ""
+                else:
+                    yield (
+                        "interim_answer",
+                        {"answer": ctx.interim_buffer.strip(), "node": node_name},
+                    )
+                    ctx.interim_buffer = ""
             # LLM decided to call one or more tools — emit a step_start
             # for each tool call the instant the decision is made.
             for tc in tool_calls:
@@ -1067,6 +1085,23 @@ def _iter_message_events(
                     (interim_text + "\n" + content).strip()
                     if interim_text else content.strip()
                 )
+            # De-dup: if the interim answer is byte-for-byte the same as
+            # the friendly_progress that will fire for the next tool
+            # call, drop it — the progress card already shows the same
+            # phrase. Without this guard, mock LLM messages that pair a
+            # tool_call with a narration (e.g. "正在查询订单 1001 状态..."
+            # + query_order) would surface the phrase twice: once as an
+            # interim bubble and once as a running step. The frontend
+            # tried to de-dup but lost the race (interim arrives before
+            # the step is pushed), so the duplicate slipped through.
+            if interim_text and has_new_tc:
+                norm = lambda s: re.sub(r'[。…，！？.,!?]+$', '', s).strip()
+                next_friendly = norm(_friendly_progress(
+                    tool_calls[0].get("name", "unknown") if isinstance(tool_calls[0], dict) else "unknown",
+                    tool_calls[0].get("args", {}) if isinstance(tool_calls[0], dict) else {},
+                ))
+                if norm(interim_text) == next_friendly:
+                    interim_text = ""
             if interim_text:
                 yield (
                     "interim_answer",
