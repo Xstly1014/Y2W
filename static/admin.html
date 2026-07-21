@@ -1,0 +1,2203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0719agent · 运营后台</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
+<style>
+/* ============================================================
+   Design tokens — shared with index.html, admin uses denser layout
+   ============================================================ */
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
+
+  /* Neutral surfaces */
+  --color-bg: #fafafa;
+  --color-bg-elevated: #ffffff;
+  --color-surface: #ffffff;
+  --color-border: #e5e7eb;
+  --color-border-strong: #d1d5db;
+  --color-divider: #f3f4f6;
+
+  /* Dark sidebar palette (admin distinction) */
+  --color-sidebar-bg: #0f172a;
+  --color-sidebar-bg-2: #1e293b;
+  --color-sidebar-border: #1e293b;
+  --color-sidebar-text: #94a3b8;
+  --color-sidebar-text-strong: #e2e8f0;
+  --color-sidebar-text-muted: #64748b;
+  --color-sidebar-active-bg: rgba(13, 148, 136, 0.16);
+  --color-sidebar-active-text: #5eead4;
+  --color-sidebar-hover-bg: rgba(255, 255, 255, 0.04);
+  --color-sidebar-brand: #f1f5f9;
+
+  /* Text */
+  --color-text: #111827;
+  --color-text-secondary: #4b5563;
+  --color-text-tertiary: #6b7280;
+  --color-text-muted: #9ca3af;
+
+  /* Accent: teal 600 (consistent with index.html) */
+  --color-primary: #0d9488;
+  --color-primary-hover: #0f766e;
+  --color-primary-active: #115e56;
+  --color-primary-light: #ccfbf1;
+  --color-primary-bg: #f0fdfa;
+
+  /* Status */
+  --color-success: #059669;
+  --color-success-bg: #ecfdf5;
+  --color-warning: #d97706;
+  --color-warning-bg: #fffbeb;
+  --color-danger: #dc2626;
+  --color-danger-bg: #fef2f2;
+  --color-info: #0ea5e9;
+  --color-info-bg: #f0f9ff;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Spacing (denser than index.html) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+  --shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px 0 rgba(15, 23, 42, 0.03);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.04);
+
+  /* Font sizes (admin = slightly smaller base) */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-xl: 17px;
+  --text-2xl: 20px;
+  --text-3xl: 24px;
+
+  --transition: 180ms ease;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+button, input, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: none; }
+a { color: var(--color-primary); text-decoration: none; }
+a:hover { color: var(--color-primary-hover); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+::-webkit-scrollbar-track { background: transparent; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   Layout
+   ============================================================ */
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---------- Dark sidebar ---------- */
+.sidebar {
+  background: var(--color-sidebar-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-sidebar-border);
+}
+.brand-logo {
+  width: 30px; height: 30px;
+  background: var(--color-primary);
+  border-radius: var(--radius);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: var(--text-md);
+  letter-spacing: -0.5px; flex-shrink: 0;
+}
+.brand-title { font-size: var(--text-md); font-weight: 600; color: var(--color-sidebar-brand); line-height: 1.2; }
+.brand-sub { font-size: var(--text-xs); color: var(--color-sidebar-text-muted); margin-top: 2px; }
+
+.nav { flex: 1; padding: var(--space-3) var(--space-2); display: flex; flex-direction: column; gap: 1px; overflow-y: auto; }
+.nav-section-label {
+  font-size: 10px;
+  color: var(--color-sidebar-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-weight: 600;
+}
+.nav-item {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: 7px var(--space-3);
+  border-radius: var(--radius);
+  color: var(--color-sidebar-text);
+  font-size: var(--text-base);
+  font-weight: 500;
+  transition: background var(--transition), color var(--transition);
+  user-select: none;
+  border-left: 2px solid transparent;
+  margin-left: 0;
+}
+.nav-item:hover { background: var(--color-sidebar-hover-bg); color: var(--color-sidebar-text-strong); }
+.nav-item.active {
+  background: var(--color-sidebar-active-bg);
+  color: var(--color-sidebar-active-text);
+  font-weight: 600;
+  border-left-color: var(--color-primary);
+}
+.nav-item .nav-icon { width: 16px; height: 16px; flex-shrink: 0; }
+.nav-item .nav-icon svg { width: 16px; height: 16px; display: block; }
+
+.sidebar-footer {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-sidebar-border);
+  font-size: var(--text-xs);
+  color: var(--color-sidebar-text-muted);
+}
+.sidebar-footer .tenant-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--color-sidebar-bg-2); border: 1px solid var(--color-sidebar-border);
+  padding: 4px 8px; border-radius: var(--radius-sm); color: var(--color-sidebar-text-strong);
+  font-family: var(--font-mono); font-size: 11px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tenant-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); flex-shrink: 0; }
+.sidebar-footer .user-link {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: var(--space-2);
+  color: var(--color-sidebar-text);
+  font-size: var(--text-xs);
+  padding: 4px 0;
+}
+.sidebar-footer .user-link:hover { color: var(--color-sidebar-active-text); }
+
+/* ---------- Main ---------- */
+.main { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.topbar {
+  height: 52px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 var(--space-5);
+  flex-shrink: 0;
+}
+.topbar-left { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.topbar-title { font-size: var(--text-lg); font-weight: 600; color: var(--color-text); }
+.topbar-sub { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 1px; }
+.topbar-actions { display: flex; align-items: center; gap: var(--space-3); }
+.health-indicator {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px;
+  font-size: var(--text-xs); font-weight: 500;
+  background: var(--color-success-bg); color: var(--color-success);
+  border: 1px solid rgba(5, 150, 105, 0.2);
+}
+.health-indicator .pulse {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--color-success);
+  animation: pulse 2s infinite;
+}
+.health-indicator.degraded { background: var(--color-warning-bg); color: var(--color-warning); border-color: rgba(217, 119, 6, 0.2); }
+.health-indicator.degraded .pulse { background: var(--color-warning); }
+.health-indicator.down { background: var(--color-danger-bg); color: var(--color-danger); border-color: rgba(220, 38, 38, 0.2); }
+.health-indicator.down .pulse { background: var(--color-danger); animation: none; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.4); }
+}
+.auto-refresh-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--text-xs); color: var(--color-text-tertiary);
+  padding: 3px 10px; border: 1px solid var(--color-border); border-radius: 999px;
+  cursor: pointer; transition: all var(--transition);
+}
+.auto-refresh-toggle:hover { color: var(--color-text); border-color: var(--color-text-muted); }
+.auto-refresh-toggle.on { color: var(--color-primary); border-color: var(--color-primary); background: var(--color-primary-bg); }
+.auto-refresh-toggle .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.auto-refresh-toggle.on .dot { animation: pulse 2s infinite; }
+
+.content { flex: 1; overflow: hidden; position: relative; }
+.page {
+  position: absolute; inset: 0;
+  overflow: auto;
+  padding: var(--space-5);
+  opacity: 1;
+  transition: opacity 150ms ease;
+}
+.page.hidden { opacity: 0; pointer-events: none; }
+
+/* ============================================================
+   Generic components
+   ============================================================ */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: var(--space-3);
+  gap: var(--space-3);
+}
+.card-title { font-size: var(--text-md); font-weight: 600; color: var(--color-text); }
+.card-subtitle { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 2px; }
+.card-actions { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: var(--radius);
+  font-size: var(--text-sm); font-weight: 500;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-elevated); color: var(--color-text);
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+  white-space: nowrap; line-height: 1.4;
+}
+.btn:hover { background: #f9fafb; border-color: var(--color-text-muted); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+.btn-ghost { border-color: transparent; background: transparent; color: var(--color-text-secondary); }
+.btn-ghost:hover { background: rgba(15, 23, 42, 0.04); color: var(--color-text); }
+.btn-sm { padding: 3px 9px; font-size: var(--text-xs); }
+.btn-danger { color: var(--color-danger); border-color: rgba(220, 38, 38, 0.3); }
+.btn-danger:hover { background: var(--color-danger-bg); }
+.btn-link { padding: 0; border: none; background: none; color: var(--color-primary); font-weight: 500; }
+.btn-link:hover { color: var(--color-primary-hover); text-decoration: underline; }
+
+.input, .select, .textarea {
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  transition: border-color var(--transition), box-shadow var(--transition);
+  outline: none;
+}
+.input:focus, .select:focus, .textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12);
+}
+.input.mono, .select.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+
+.tag {
+  display: inline-flex; align-items: center;
+  padding: 1px 7px; border-radius: var(--radius-sm);
+  font-size: var(--text-xs); font-weight: 500;
+  background: #f3f4f6; color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+.tag-success { background: var(--color-success-bg); color: var(--color-success); }
+.tag-warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.tag-danger { background: var(--color-danger-bg); color: var(--color-danger); }
+.tag-primary { background: var(--color-primary-bg); color: var(--color-primary-active); }
+.tag-info { background: var(--color-info-bg); color: var(--color-info); }
+.tag-outline { background: transparent; border: 1px solid var(--color-border-strong); color: var(--color-text-secondary); }
+
+.table-wrap { overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius); }
+.table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--text-sm); }
+.table th {
+  text-align: left; font-weight: 600; color: var(--color-text-secondary);
+  padding: 8px 12px; border-bottom: 1px solid var(--color-border);
+  background: #f9fafb; font-size: var(--text-xs);
+  text-transform: uppercase; letter-spacing: 0.3px;
+  position: sticky; top: 0; z-index: 1;
+  white-space: nowrap;
+}
+.table td { padding: 9px 12px; border-bottom: 1px solid var(--color-divider); color: var(--color-text); vertical-align: middle; }
+.table tr:hover td { background: #fafbfc; }
+.table tr:last-child td { border-bottom: none; }
+.table tr.clickable { cursor: pointer; }
+.table .td-mono { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-tertiary); }
+.table .td-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.table .td-truncate { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table .td-truncate:hover { white-space: normal; word-break: break-word; }
+
+.empty-state {
+  padding: var(--space-8) var(--space-4);
+  text-align: center; color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.empty-state-icon { margin-bottom: var(--space-3); opacity: 0.4; display: flex; justify-content: center; }
+.empty-state-icon svg { width: 36px; height: 36px; }
+
+/* Skeleton loading */
+.skeleton {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 37%, #f3f4f6 63%);
+  background-size: 400% 100%;
+  animation: skeleton-loading 1.4s ease infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes skeleton-loading {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+.skeleton-line { height: 12px; margin-bottom: 6px; }
+.skeleton-line.short { width: 40%; }
+.skeleton-kpi { height: 64px; border-radius: var(--radius-lg); }
+
+/* Toast */
+#toast-container {
+  position: fixed; top: 16px; right: 16px;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  z-index: 1000; pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  min-width: 240px; max-width: 380px;
+  padding: 9px 14px;
+  border-radius: var(--radius);
+  background: var(--color-text); color: #fff;
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-lg);
+  display: flex; align-items: center; gap: 8px;
+  animation: toast-in 200ms ease;
+}
+.toast.success { background: var(--color-success); }
+.toast.error { background: var(--color-danger); }
+.toast.warning { background: var(--color-warning); }
+.toast.info { background: var(--color-text); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Pagination */
+.pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs); color: var(--color-text-muted);
+  border-top: 1px solid var(--color-divider);
+}
+.pagination-info { font-family: var(--font-mono); }
+.pagination-controls { display: flex; align-items: center; gap: 4px; }
+.page-btn {
+  min-width: 26px; height: 26px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated); color: var(--color-text-secondary);
+  font-size: var(--text-xs); font-family: var(--font-mono);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: all var(--transition);
+}
+.page-btn:hover:not(:disabled) { border-color: var(--color-primary); color: var(--color-primary); }
+.page-btn.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ============================================================
+   Page 1: Dashboard
+   ============================================================ */
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3); margin-bottom: var(--space-4); }
+.kpi-card {
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4);
+  position: relative; overflow: hidden;
+  transition: box-shadow var(--transition), border-color var(--transition);
+}
+.kpi-card:hover { box-shadow: var(--shadow-sm); border-color: var(--color-border-strong); }
+.kpi-label {
+  font-size: var(--text-xs); color: var(--color-text-muted);
+  margin-bottom: 4px; font-weight: 500;
+  display: flex; align-items: center; gap: 6px;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.kpi-label svg { width: 13px; height: 13px; opacity: 0.6; }
+.kpi-value {
+  font-size: var(--text-2xl); font-weight: 700; color: var(--color-text);
+  line-height: 1.2; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.kpi-value .unit { font-size: var(--text-sm); font-weight: 500; color: var(--color-text-muted); margin-left: 3px; }
+.kpi-sub {
+  font-size: var(--text-xs); color: var(--color-text-tertiary);
+  margin-top: 4px; display: flex; align-items: center; gap: 4px;
+}
+.kpi-sub.up { color: var(--color-success); }
+.kpi-sub.down { color: var(--color-danger); }
+
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); margin-bottom: var(--space-4); }
+.chart-grid.full { grid-template-columns: 1fr; }
+.chart-container { position: relative; height: 240px; }
+.chart-container.tall { height: 280px; }
+
+.section-gap { margin-bottom: var(--space-4); }
+
+/* ============================================================
+   Page 3: Trace detail (inline expansion)
+   ============================================================ */
+.trace-filters { display: flex; gap: var(--space-3); margin-bottom: var(--space-3); align-items: flex-end; flex-wrap: wrap; }
+.filter-field { display: flex; flex-direction: column; gap: 3px; }
+.filter-field label { font-size: var(--text-xs); color: var(--color-text-muted); font-weight: 500; }
+
+.trace-detail-row td { background: #fafbfc !important; padding: var(--space-4) var(--space-5) !important; }
+.trace-detail-inner { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.trace-detail-section { }
+.trace-detail-label {
+  font-size: var(--text-xs); font-weight: 600; color: var(--color-text-secondary);
+  text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px;
+}
+.trace-detail-box {
+  padding: 10px 12px; background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  font-size: var(--text-sm); max-height: 240px; overflow: auto;
+}
+.trace-detail-box.user { background: var(--color-primary-bg); border-left: 3px solid var(--color-primary); }
+
+.steps-timeline { position: relative; padding-left: 18px; }
+.steps-timeline::before {
+  content: ''; position: absolute; left: 6px; top: 4px; bottom: 4px;
+  width: 2px; background: var(--color-divider);
+}
+.step-item { position: relative; padding: 6px 0 6px 8px; }
+.step-item::before {
+  content: ''; position: absolute; left: -16px; top: 10px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--color-bg-elevated); border: 2px solid var(--color-primary);
+}
+.step-item.llm::before { border-color: #6366f1; }
+.step-item.tool::before { border-color: var(--color-warning); }
+.step-item.error::before { border-color: var(--color-danger); }
+.step-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+.step-name { font-size: var(--text-sm); font-weight: 600; color: var(--color-text); }
+.step-meta { font-size: var(--text-xs); color: var(--color-text-muted); font-family: var(--font-mono); display: flex; gap: 8px; }
+.step-preview {
+  font-size: var(--text-xs); color: var(--color-text-secondary);
+  font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word;
+  background: #fafbfc; padding: 6px 8px; border-radius: var(--radius-sm);
+  max-height: 120px; overflow: auto; margin-top: 4px;
+}
+
+/* ============================================================
+   Page 5: KB
+   ============================================================ */
+.kb-toolbar { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; margin-bottom: var(--space-3); }
+.upload-zone {
+  border: 1.5px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+  background: var(--color-bg-elevated);
+}
+.upload-zone:hover, .upload-zone.dragover { border-color: var(--color-primary); background: var(--color-primary-bg); }
+.upload-zone-icon { color: var(--color-text-muted); margin-bottom: var(--space-2); display: flex; justify-content: center; }
+.upload-zone-icon svg { width: 28px; height: 28px; }
+.upload-zone-text { font-size: var(--text-sm); color: var(--color-text-secondary); }
+.upload-zone-hint { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 4px; }
+.kb-hit {
+  padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius);
+  margin-bottom: var(--space-2); background: #fafbfc;
+}
+.kb-hit-head { display: flex; justify-content: space-between; margin-bottom: 6px; align-items: center; }
+.kb-hit-content { font-size: var(--text-sm); color: var(--color-text-secondary); white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+
+/* ============================================================
+   Page 6: Flywheel
+   ============================================================ */
+.flywheel-cases { max-height: 360px; overflow: auto; }
+.flywheel-case {
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  padding: 10px 12px; margin-bottom: var(--space-2);
+  background: #fafbfc;
+}
+.flywheel-case-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.flywheel-case-q { font-size: var(--text-sm); font-weight: 500; color: var(--color-text); word-break: break-word; }
+.flywheel-case-a { font-size: var(--text-xs); color: var(--color-text-secondary); margin-top: 4px; word-break: break-word; }
+.flywheel-case-meta { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 6px; display: flex; gap: var(--space-3); font-family: var(--font-mono); }
+
+/* ============================================================
+   Page 7: Settings
+   ============================================================ */
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.setting-row { display: flex; justify-content: space-between; align-items: center; padding: var(--space-3) 0; border-bottom: 1px solid var(--color-divider); gap: var(--space-3); }
+.setting-row:last-child { border-bottom: none; }
+.setting-label { font-size: var(--text-sm); color: var(--color-text); font-weight: 500; }
+.setting-desc { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 2px; }
+.setting-value { font-size: var(--text-sm); color: var(--color-text-secondary); font-family: var(--font-mono); }
+
+/* Markdown render inside trace detail */
+.markdown-body > *:first-child { margin-top: 0; }
+.markdown-body > *:last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 8px; line-height: 1.7; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { margin: 12px 0 6px; font-weight: 600; line-height: 1.4; }
+.markdown-body h1 { font-size: 17px; } .markdown-body h2 { font-size: 16px; } .markdown-body h3 { font-size: 15px; }
+.markdown-body ul, .markdown-body ol { margin: 6px 0; padding-left: 22px; }
+.markdown-body li { margin: 3px 0; }
+.markdown-body code { font-family: var(--font-mono); font-size: 0.92em; background: #f3f4f6; color: #be185d; padding: 1px 5px; border-radius: 3px; }
+.markdown-body pre { background: #1f2937; color: #e5e7eb; padding: 10px 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: 12px; }
+.markdown-body pre code { background: transparent; color: inherit; padding: 0; }
+.markdown-body blockquote { border-left: 3px solid var(--color-primary); padding: 4px 12px; margin: 8px 0; background: var(--color-primary-bg); color: var(--color-text-secondary); border-radius: 0 4px 4px 0; }
+.markdown-body table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
+.markdown-body th, .markdown-body td { border: 1px solid var(--color-border); padding: 5px 8px; text-align: left; }
+.markdown-body th { background: #f9fafb; font-weight: 600; }
+.markdown-body strong { font-weight: 600; }
+.markdown-body a { color: var(--color-primary); text-decoration: underline; }
+
+/* Responsive */
+@media (max-width: 1100px) {
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .chart-grid { grid-template-columns: 1fr; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .trace-detail-inner { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============== Dark sidebar ============== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">07</div>
+      <div>
+        <div class="brand-title">0719agent</div>
+        <div class="brand-sub">运营后台</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <div class="nav-section-label">监控</div>
+      <div class="nav-item active" data-page="dashboard">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>
+        <span>数据看板</span>
+      </div>
+      <div class="nav-item" data-page="retrieval">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+        <span>召回评估</span>
+      </div>
+      <div class="nav-item" data-page="traces">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
+        <span>Trace 诊断</span>
+      </div>
+      <div class="nav-item" data-page="agents">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.07-7.07l-4.24 4.24M9.17 14.83l-4.24 4.24m0-13.14l4.24 4.24m5.66 5.66l4.24 4.24"/></svg></span>
+        <span>多 Agent 监控</span>
+      </div>
+
+      <div class="nav-section-label">数据</div>
+      <div class="nav-item" data-page="kb">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+        <span>知识库管理</span>
+      </div>
+      <div class="nav-item" data-page="flywheel">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span>
+        <span>数据飞轮</span>
+      </div>
+
+      <div class="nav-section-label">系统</div>
+      <div class="nav-item" data-page="settings">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+        <span>系统设置</span>
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div style="margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; font-size: 10px;">当前租户</div>
+      <div class="tenant-chip" id="sidebar-tenant-chip">
+        <span class="tenant-dot"></span>
+        <span id="sidebar-tenant-id">demo</span>
+      </div>
+      <a class="user-link" href="/">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+        <span>切换到用户端</span>
+      </a>
+    </div>
+  </aside>
+
+  <!-- ============== Main ============== -->
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div>
+          <div class="topbar-title" id="page-title">数据看板</div>
+          <div class="topbar-sub" id="page-subtitle">运营指标与 agent 调用质量全景</div>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div class="auto-refresh-toggle on" id="auto-refresh-toggle" title="数据看板每 30 秒自动刷新">
+          <span class="dot"></span>
+          <span id="auto-refresh-text">自动刷新</span>
+        </div>
+        <div class="health-indicator" id="health-indicator">
+          <span class="pulse"></span>
+          <span id="health-text">检测中</span>
+        </div>
+        <a class="btn btn-sm" href="/">用户端</a>
+      </div>
+    </header>
+
+    <div class="content">
+      <!-- ========== Page 1: Dashboard ========== -->
+      <section id="page-dashboard" class="page">
+        <div class="kpi-grid" id="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z" opacity="0"/><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+              总请求数
+            </div>
+            <div class="kpi-value" id="kpi-total-traces">—</div>
+            <div class="kpi-sub" id="kpi-error-sub">错误率 —</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              平均延迟
+            </div>
+            <div class="kpi-value" id="kpi-avg-latency">—<span class="unit">ms</span></div>
+            <div class="kpi-sub" id="kpi-p95-sub">P95 —</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              平均步数
+            </div>
+            <div class="kpi-value" id="kpi-avg-steps">—</div>
+            <div class="kpi-sub" id="kpi-fcr-sub">FCR —</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+              反馈率
+            </div>
+            <div class="kpi-value" id="kpi-feedback-rate">—</div>
+            <div class="kpi-sub" id="kpi-positive-sub">好评率 —</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+              工具成功率
+            </div>
+            <div class="kpi-value" id="kpi-tool-success">—</div>
+            <div class="kpi-sub">tool_success_rate</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              总成本
+            </div>
+            <div class="kpi-value" id="kpi-total-cost">—</div>
+            <div class="kpi-sub" id="kpi-cost-sub">USD</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+              Token 入
+            </div>
+            <div class="kpi-value" id="kpi-tokens-in">—</div>
+            <div class="kpi-sub">prompt tokens</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg>
+              Token 出
+            </div>
+            <div class="kpi-value" id="kpi-tokens-out">—</div>
+            <div class="kpi-sub">completion tokens</div>
+          </div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">延迟趋势</div>
+                <div class="card-subtitle">avg_ms / p95_ms · 最近 14 天</div>
+              </div>
+              <div class="card-actions">
+                <select class="select" id="trend-range" style="width: 110px;">
+                  <option value="7">7 天</option>
+                  <option value="14" selected>14 天</option>
+                  <option value="30">30 天</option>
+                </select>
+              </div>
+            </div>
+            <div class="chart-container"><canvas id="chart-latency-trend"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">成本趋势</div>
+                <div class="card-subtitle">cost_usd · 按天</div>
+              </div>
+            </div>
+            <div class="chart-container"><canvas id="chart-cost-trend"></canvas></div>
+          </div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">Token 趋势</div>
+                <div class="card-subtitle">tokens_in / tokens_out · 按天</div>
+              </div>
+            </div>
+            <div class="chart-container"><canvas id="chart-token-trend"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">反馈趋势</div>
+                <div class="card-subtitle">good / bad · 堆叠柱图</div>
+              </div>
+            </div>
+            <div class="chart-container"><canvas id="chart-feedback-trend"></canvas></div>
+          </div>
+        </div>
+
+        <div class="card section-gap">
+          <div class="card-header">
+            <div>
+              <div class="card-title">工具调用统计</div>
+              <div class="card-subtitle">按调用次数降序</div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-sm" id="dashboard-refresh-btn">刷新</button>
+            </div>
+          </div>
+          <div id="tools-table-wrap"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">最近会话</div>
+              <div class="card-subtitle">按最后活跃时间倒序</div>
+            </div>
+          </div>
+          <div id="conversations-table-wrap"></div>
+        </div>
+      </section>
+
+      <!-- ========== Page 2: Retrieval ========== -->
+      <section id="page-retrieval" class="page hidden">
+        <div class="kpi-grid" id="retrieval-kpi-grid" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="kpi-card">
+            <div class="kpi-label">RAG 调用总数</div>
+            <div class="kpi-value" id="rag-total">—</div>
+            <div class="kpi-sub">total_rag_calls</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">平均延迟</div>
+            <div class="kpi-value" id="rag-avg-latency">—<span class="unit">ms</span></div>
+            <div class="kpi-sub">avg_rag_latency_ms</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">空结果率</div>
+            <div class="kpi-value" id="rag-empty-rate">—</div>
+            <div class="kpi-sub">empty_rate</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">平均返回长度</div>
+            <div class="kpi-value" id="rag-avg-preview">—<span class="unit">chars</span></div>
+            <div class="kpi-sub">avg_preview_length</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">最近 RAG 调用</div>
+              <div class="card-subtitle">点击 trace_id 跳转诊断</div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-sm" id="retrieval-refresh-btn">刷新</button>
+            </div>
+          </div>
+          <div id="retrieval-table-wrap"></div>
+        </div>
+        <div class="card" style="margin-top: var(--space-4);">
+          <div class="card-title" style="margin-bottom: 6px;">说明</div>
+          <div style="font-size: var(--text-sm); color: var(--color-text-secondary); line-height: 1.7;">
+            当前为基础召回统计。要计算 precision@k / recall@k 需要标注的 ground truth 数据集，可通过 data/eval/ 目录上传评估集启用完整召回评估。
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== Page 3: Traces ========== -->
+      <section id="page-traces" class="page hidden">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Trace 诊断</div>
+              <div class="card-subtitle">每次 agent 调用的完整步骤、token 与成本</div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-sm" id="traces-refresh-btn">刷新</button>
+            </div>
+          </div>
+          <div class="trace-filters">
+            <div class="filter-field">
+              <label>Thread ID</label>
+              <input type="text" class="input mono" id="filter-thread" placeholder="按 thread_id 筛选" style="width: 240px;">
+            </div>
+            <div class="filter-field">
+              <label>数量</label>
+              <select class="select" id="filter-limit" style="width: 100px;">
+                <option value="20" selected>20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" id="filter-apply-btn">查询</button>
+          </div>
+          <div id="traces-table-wrap"></div>
+        </div>
+      </section>
+
+      <!-- ========== Page 4: Agents ========== -->
+      <section id="page-agents" class="page hidden">
+        <div class="card section-gap">
+          <div class="card-header">
+            <div>
+              <div class="card-title">多 Agent 路由分布</div>
+              <div class="card-subtitle" id="agents-summary">当前多 agent 路由分布概览</div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-sm" id="agents-refresh-btn">刷新</button>
+            </div>
+          </div>
+          <div id="agents-body">
+            <div class="empty-state">
+              <div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6"/></svg></div>
+              <div>加载中...</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== Page 5: KB ========== -->
+      <section id="page-kb" class="page hidden">
+        <div class="card section-gap">
+          <div class="card-header">
+            <div>
+              <div class="card-title">文档上传与样本</div>
+              <div class="card-subtitle">支持 .txt / .md，多选批量上传</div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-sm btn-primary" id="ingest-samples-btn">一键灌入样本数据</button>
+            </div>
+          </div>
+          <div class="upload-zone" id="upload-zone">
+            <div class="upload-zone-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
+            <div class="upload-zone-text">点击或拖拽文件到此区域上传</div>
+            <div class="upload-zone-hint">支持多文件批量上传，单文件不超过 5MB</div>
+            <input type="file" id="file-input" multiple accept=".txt,.md" style="display:none">
+          </div>
+        </div>
+
+        <div class="card section-gap">
+          <div class="card-header">
+            <div>
+              <div class="card-title">检索调试</div>
+              <div class="card-subtitle">GET /api/kb/search</div>
+            </div>
+          </div>
+          <div class="kb-toolbar">
+            <input type="text" class="input" id="kb-search-input" placeholder="输入查询语句，例如：退货政策" style="flex: 1; min-width: 240px;">
+            <select class="select" id="kb-search-k" style="width: 100px;">
+              <option value="3">Top 3</option>
+              <option value="5" selected>Top 5</option>
+              <option value="10">Top 10</option>
+            </select>
+            <button class="btn btn-primary" id="kb-search-btn">检索</button>
+          </div>
+          <div id="kb-search-results">
+            <div class="empty-state">输入查询后显示命中片段</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">已入库文档片段</div>
+              <div class="card-subtitle" id="kb-docs-count">共 0 个片段</div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-sm" id="kb-refresh-btn">刷新</button>
+            </div>
+          </div>
+          <div id="kb-docs-table-wrap"></div>
+        </div>
+      </section>
+
+      <!-- ========== Page 6: Flywheel ========== -->
+      <section id="page-flywheel" class="page hidden">
+        <div class="kpi-grid" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="kpi-card">
+            <div class="kpi-label">Good Cases</div>
+            <div class="kpi-value" id="fw-good" style="color: var(--color-success);">—</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Bad Cases</div>
+            <div class="kpi-value" id="fw-bad" style="color: var(--color-danger);">—</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">总样本数</div>
+            <div class="kpi-value" id="fw-total">—</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Good 率</div>
+            <div class="kpi-value" id="fw-good-rate">—</div>
+          </div>
+        </div>
+        <div class="card section-gap">
+          <div class="card-header">
+            <div>
+              <div class="card-title">后训练数据生成</div>
+              <div class="card-subtitle">基于飞轮数据生成 SFT / DPO 训练集</div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-sm" id="flywheel-refresh-btn">刷新</button>
+              <button class="btn btn-sm btn-primary" id="post-train-btn">构建 SFT/DPO 数据集</button>
+            </div>
+          </div>
+          <div id="post-train-result">
+            <div class="empty-state">点击「构建 SFT/DPO 数据集」生成训练 artefacts</div>
+          </div>
+        </div>
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">最近 Bad Cases</div>
+                <div class="card-subtitle" id="bad-count-label">共 0 条</div>
+              </div>
+            </div>
+            <div id="bad-cases-list" class="flywheel-cases"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">最近 Good Cases</div>
+                <div class="card-subtitle" id="good-count-label">共 0 条</div>
+              </div>
+            </div>
+            <div id="good-cases-list" class="flywheel-cases"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== Page 7: Settings ========== -->
+      <section id="page-settings" class="page hidden">
+        <div class="settings-grid">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">健康状态</div>
+                <div class="card-subtitle">GET /api/health</div>
+              </div>
+              <div class="card-actions">
+                <button class="btn btn-sm" id="settings-health-btn">重新检测</button>
+              </div>
+            </div>
+            <div>
+              <div class="setting-row">
+                <div><div class="setting-label">状态</div><div class="setting-desc">服务运行状态</div></div>
+                <div class="setting-value" id="settings-health-status">—</div>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-label">服务名</div><div class="setting-desc">service</div></div>
+                <div class="setting-value" id="settings-health-service">—</div>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-label">版本</div><div class="setting-desc">version</div></div>
+                <div class="setting-value" id="settings-health-version">—</div>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-label">时间</div><div class="setting-desc">time</div></div>
+                <div class="setting-value" id="settings-health-time">—</div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">租户切换</div>
+                <div class="card-subtitle">所有 API 请求会带 X-Tenant-Id 头</div>
+              </div>
+            </div>
+            <div>
+              <div class="setting-row">
+                <div><div class="setting-label">Tenant ID</div><div class="setting-desc">存储于 localStorage，默认 demo-tenant</div></div>
+                <div style="display: flex; gap: 8px;">
+                  <input type="text" class="input mono" id="settings-tenant-input" style="width: 200px;" value="demo-tenant">
+                  <button class="btn btn-primary btn-sm" id="settings-tenant-save">保存</button>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-label">Collection 命名</div><div class="setting-desc">RAG 向量库 collection 前缀</div></div>
+                <div class="setting-value" id="settings-collection-name">kb_demo</div>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-label">清空本地缓存</div><div class="setting-desc">清除 localStorage 中的租户设置</div></div>
+                <button class="btn btn-sm btn-danger" id="settings-clear-local-btn">清空</button>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">快捷入口</div>
+                <div class="card-subtitle">常用链接</div>
+              </div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 10px; padding-top: 6px;">
+              <a class="btn" href="/">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+                打开用户端客服对话
+              </a>
+              <a class="btn" href="/docs" target="_blank">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                Swagger API 文档
+              </a>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">关于</div>
+                <div class="card-subtitle">系统信息</div>
+              </div>
+            </div>
+            <div>
+              <div class="setting-row">
+                <div class="setting-label">系统名称</div>
+                <div class="setting-value">0719agent Commerce</div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">技术栈</div>
+                <div class="setting-value">FastAPI · LangGraph</div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">运行模式</div>
+                <div class="setting-value">SaaS (multi-tenant)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+/* ============================================================
+   Global state
+   ============================================================ */
+const state = {
+  // IMPORTANT: default must match settings.default_tenant_id ("demo-tenant").
+  // See index.html for the cold-start rationale.
+  tenantId: localStorage.getItem('0719_admin_tenant') || 'demo-tenant',
+  currentPage: 'dashboard',
+  charts: {},
+  healthTimer: null,
+  autoRefresh: true,
+  autoRefreshTimer: null,
+  // cached data for pagination
+  data: {
+    traces: [],
+    tools: [],
+    conversations: [],
+    retrieval: [],
+    kbDocs: [],
+    badCases: [],
+    goodCases: [],
+    agents: [],
+  },
+  pages: { traces: 1, tools: 1, conversations: 1, retrieval: 1, kb: 1, bad: 1, good: 1, agents: 1 },
+  expandedTrace: null,
+};
+
+const PAGE_TITLES = {
+  dashboard: { title: '数据看板', subtitle: '运营指标与 agent 调用质量全景' },
+  retrieval: { title: '召回评估', subtitle: 'RAG retrieval 调用统计与诊断' },
+  traces: { title: 'Trace 诊断', subtitle: '每次 agent 调用的步骤、token、成本' },
+  agents: { title: '多 Agent 监控', subtitle: '路由分布与各 agent 调用质量' },
+  kb: { title: '知识库管理', subtitle: '上传、灌入样本、检索调试 RAG' },
+  flywheel: { title: '数据飞轮', subtitle: '反馈案例收集与后训练数据生成' },
+  settings: { title: '系统设置', subtitle: '健康状态、租户切换、快捷入口' },
+};
+
+const PAGE_SIZE = 20;
+
+/* ============================================================
+   API client — always carries X-Tenant-Id header
+   ============================================================ */
+async function api(path, opts = {}) {
+  const headers = { 'X-Tenant-Id': state.tenantId, ...(opts.headers || {}) };
+  if (opts.body && !(opts.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+    opts.body = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body);
+  }
+  const resp = await fetch(path, { ...opts, headers });
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`;
+    try { const j = await resp.json(); msg = j.detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  const ct = resp.headers.get('content-type') || '';
+  if (ct.includes('application/json')) return resp.json();
+  return resp.text();
+}
+
+/* ============================================================
+   Toast
+   ============================================================ */
+function toast(message, type = 'info', duration = 3000) {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = 'opacity 200ms';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 200);
+  }, duration);
+}
+
+/* ============================================================
+   Router (SPA show/hide)
+   ============================================================ */
+function switchPage(pageName) {
+  state.currentPage = pageName;
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === pageName));
+  document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+  const pageEl = document.getElementById(`page-${pageName}`);
+  if (pageEl) pageEl.classList.remove('hidden');
+  const meta = PAGE_TITLES[pageName] || { title: '', subtitle: '' };
+  document.getElementById('page-title').textContent = meta.title;
+  document.getElementById('page-subtitle').textContent = meta.subtitle;
+  // Lazy load on page entry
+  if (pageName === 'dashboard') loadDashboard();
+  if (pageName === 'retrieval') loadRetrieval();
+  if (pageName === 'traces') loadTraces();
+  if (pageName === 'agents') loadAgents();
+  if (pageName === 'kb') loadKbDocuments();
+  if (pageName === 'flywheel') loadFlywheel();
+  if (pageName === 'settings') loadSettings();
+}
+
+/* ============================================================
+   Health check
+   ============================================================ */
+async function checkHealth() {
+  const indicator = document.getElementById('health-indicator');
+  const text = document.getElementById('health-text');
+  try {
+    const r = await api('/api/health');
+    text.textContent = '服务正常';
+    indicator.className = 'health-indicator';
+    return r;
+  } catch (e) {
+    text.textContent = '服务异常';
+    indicator.className = 'health-indicator down';
+    return null;
+  }
+}
+
+/* ============================================================
+   Page 1: Dashboard
+   ============================================================ */
+async function loadDashboard() {
+  // Show skeletons for KPIs
+  setKpiSkeletons();
+  try {
+    const days = parseInt(document.getElementById('trend-range').value) || 14;
+    const [overview, latencyTrend, costTrend, feedbackTrend, tools, conversations] = await Promise.all([
+      api('/api/metrics/overview'),
+      api(`/api/metrics/latency-trend?days=${days}`),
+      api(`/api/metrics/cost-trend?days=${days}`),
+      api(`/api/metrics/feedback-trend?days=${days}`),
+      api('/api/metrics/tools'),
+      api('/api/metrics/conversations'),
+    ]);
+    renderKpis(overview);
+    renderDashboardCharts(latencyTrend, costTrend, feedbackTrend);
+    state.data.tools = (tools.tools || []).slice().sort((a, b) => (b.calls || 0) - (a.calls || 0));
+    state.pages.tools = 1;
+    renderToolsTable();
+    state.data.conversations = (conversations.recent_conversations || []).slice().sort((a, b) => new Date(b.last_active || 0) - new Date(a.last_active || 0));
+    state.pages.conversations = 1;
+    renderConversationsTable();
+  } catch (e) {
+    toast('看板加载失败: ' + e.message, 'error');
+  }
+}
+
+function setKpiSkeletons() {
+  ['kpi-total-traces','kpi-avg-latency','kpi-avg-steps','kpi-feedback-rate','kpi-tool-success','kpi-total-cost','kpi-tokens-in','kpi-tokens-out'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<span class="skeleton" style="display:inline-block;width:60px;height:20px;"></span>';
+  });
+}
+
+function renderKpis(o) {
+  document.getElementById('kpi-total-traces').textContent = fmtNum(o.total_traces);
+  document.getElementById('kpi-error-sub').textContent = `错误率 ${fmtPct(o.error_rate)} · ${fmtNum(o.total_errors)} errors`;
+  document.getElementById('kpi-avg-latency').innerHTML = `${fmtMs(o.avg_latency_ms)}<span class="unit">ms</span>`;
+  document.getElementById('kpi-p95-sub').textContent = `P95 ${fmtMs(o.p95_latency_ms)} ms · P99 ${fmtMs(o.p99_latency_ms)} ms · P50 ${fmtMs(o.p50_latency_ms)} ms`;
+  document.getElementById('kpi-avg-steps').textContent = fmtNum(o.avg_steps, 1);
+  document.getElementById('kpi-fcr-sub').textContent = `FCR ${fmtPct(o.fcr_rate)}`;
+  document.getElementById('kpi-feedback-rate').textContent = fmtPct(o.feedback_rate);
+  document.getElementById('kpi-positive-sub').textContent = `好评率 ${fmtPct(o.feedback_positive_rate)}`;
+  document.getElementById('kpi-tool-success').textContent = fmtPct(o.tool_success_rate);
+  document.getElementById('kpi-total-cost').textContent = '$' + fmtNum(o.total_cost_usd, 4);
+  document.getElementById('kpi-cost-sub').textContent = `USD · ${fmtNum(o.total_tokens_in + o.total_tokens_out)} tokens`;
+  document.getElementById('kpi-tokens-in').textContent = fmtNum(o.total_tokens_in);
+  document.getElementById('kpi-tokens-out').textContent = fmtNum(o.total_tokens_out);
+}
+
+function renderDashboardCharts(latencyTrend, costTrend, feedbackTrend) {
+  if (window.Chart) {
+    Chart.defaults.font.family = '-apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+    Chart.defaults.color = '#6b7280';
+  }
+  // Latency trend: avg + p95
+  const latDays = (latencyTrend.days || []).slice().reverse();
+  renderLineChart('chart-latency-trend', latDays.map(d => d.date ? d.date.slice(5) : ''), [
+    { label: 'avg_ms', data: latDays.map(d => d.avg_ms || 0), color: '#0d9488' },
+    { label: 'p95_ms', data: latDays.map(d => d.p95_ms || 0), color: '#f59e0b' },
+  ], 'ms');
+
+  // Cost trend: bar
+  const costDays = (costTrend.days || []).slice().reverse();
+  renderBarChart('chart-cost-trend', costDays.map(d => d.date ? d.date.slice(5) : ''), [
+    { label: 'cost_usd', data: costDays.map(d => d.cost_usd || 0), color: '#0d9488' },
+  ], '$');
+
+  // Token trend: in + out
+  renderLineChart('chart-token-trend', costDays.map(d => d.date ? d.date.slice(5) : ''), [
+    { label: 'tokens_in', data: costDays.map(d => d.tokens_in || 0), color: '#0ea5e9' },
+    { label: 'tokens_out', data: costDays.map(d => d.tokens_out || 0), color: '#8b5cf6' },
+  ], '');
+
+  // Feedback trend: stacked bar (good + bad)
+  const fbDays = (feedbackTrend.days || []).slice().reverse();
+  renderStackedBarChart('chart-feedback-trend', fbDays.map(d => d.date ? d.date.slice(5) : ''), [
+    { label: 'good', data: fbDays.map(d => d.good || 0), color: '#059669' },
+    { label: 'bad', data: fbDays.map(d => d.bad || 0), color: '#dc2626' },
+  ]);
+}
+
+function renderToolsTable() {
+  const wrap = document.getElementById('tools-table-wrap');
+  const data = state.data.tools;
+  if (!data.length) {
+    wrap.innerHTML = '<div class="empty-state">暂无工具调用数据</div>';
+    return;
+  }
+  const total = data.reduce((s, t) => s + (t.calls || 0), 0);
+  renderPaginatedTable(wrap, data, state.pages.tools, (t) => {
+    const calls = t.calls || 0;
+    const errs = t.error_count || 0;
+    const errRate = calls > 0 ? (errs / calls * 100) : 0;
+    return `<tr>
+      <td><span class="tag tag-primary mono">${escapeHtml(t.name || '-')}</span></td>
+      <td class="td-num">${fmtNum(calls)}</td>
+      <td class="td-num">${fmtMs(t.avg_latency_ms)} ms</td>
+      <td class="td-num">${fmtNum(errs)}</td>
+      <td class="td-num">${errRate.toFixed(1)}%</td>
+      <td class="td-num">${total > 0 ? (calls / total * 100).toFixed(1) : '0.0'}%</td>
+    </tr>`;
+  }, ['工具名', '调用次数', '平均延迟', '错误数', '错误率', '占比']);
+}
+
+function renderConversationsTable() {
+  const wrap = document.getElementById('conversations-table-wrap');
+  const data = state.data.conversations;
+  if (!data.length) {
+    wrap.innerHTML = '<div class="empty-state">暂无会话数据</div>';
+    return;
+  }
+  renderPaginatedTable(wrap, data, state.pages.conversations, (c) => {
+    return `<tr>
+      <td class="td-mono" title="${escapeHtml(c.thread_id || '')}">${escapeHtml((c.thread_id || '-').slice(0, 24))}${(c.thread_id||'').length > 24 ? '...' : ''}</td>
+      <td class="td-num">${fmtNum(c.turns)}</td>
+      <td>${formatTime(c.last_active)}</td>
+      <td class="td-num">$${fmtNum(c.total_cost_usd, 4)}</td>
+    </tr>`;
+  }, ['Thread ID', '轮数', '最后活跃', '总成本']);
+}
+
+/* ============================================================
+   Page 2: Retrieval
+   ============================================================ */
+async function loadRetrieval() {
+  try {
+    const r = await api('/api/metrics/retrieval');
+    document.getElementById('rag-total').textContent = fmtNum(r.total_rag_calls);
+    document.getElementById('rag-avg-latency').innerHTML = `${fmtMs(r.avg_rag_latency_ms)}<span class="unit">ms</span>`;
+    document.getElementById('rag-empty-rate').textContent = fmtPct(r.empty_rate);
+    document.getElementById('rag-avg-preview').innerHTML = `${fmtNum(r.avg_preview_length)}<span class="unit">chars</span>`;
+    state.data.retrieval = (r.recent_calls || []).slice(0, 50);
+    state.pages.retrieval = 1;
+    renderRetrievalTable();
+  } catch (e) {
+    toast('召回数据加载失败: ' + e.message, 'error');
+  }
+}
+
+function renderRetrievalTable() {
+  const wrap = document.getElementById('retrieval-table-wrap');
+  const data = state.data.retrieval;
+  if (!data.length) {
+    wrap.innerHTML = '<div class="empty-state">暂无 RAG 调用记录</div>';
+    return;
+  }
+  renderPaginatedTable(wrap, data, state.pages.retrieval, (c) => {
+    const preview = (c.preview || '').slice(0, 100);
+    const previewEl = preview ? `<span title="${escapeHtml((c.preview||'').slice(0,300))}">${escapeHtml(preview)}${(c.preview||'').length > 100 ? '...' : ''}</span>` : '<span style="color:var(--color-text-muted);">—</span>';
+    const traceId = c.trace_id || '';
+    return `<tr>
+      <td><a class="btn-link mono" data-trace="${escapeHtml(traceId)}" title="跳转 Trace 诊断">${escapeHtml(traceId.slice(0, 12))}${traceId.length > 12 ? '...' : ''}</a></td>
+      <td class="td-truncate" title="${escapeHtml(c.user_input || '')}">${escapeHtml(c.user_input || '-')}</td>
+      <td style="max-width:360px;">${previewEl}</td>
+      <td class="td-num">${fmtMs(c.latency_ms)} ms</td>
+    </tr>`;
+  }, ['Trace ID', '用户问题', '返回内容预览', '延迟']);
+  // Bind trace jump
+  wrap.querySelectorAll('a[data-trace]').forEach(a => {
+    a.addEventListener('click', () => {
+      const tid = a.dataset.trace;
+      switchPage('traces');
+      document.getElementById('filter-thread').value = '';
+      setTimeout(() => { loadTracesForTrace(tid); }, 50);
+    });
+  });
+}
+
+async function loadTracesForTrace(traceId) {
+  // Try to load trace detail directly and show in traces table by filtering
+  try {
+    const t = await api(`/api/traces/${encodeURIComponent(traceId)}`);
+    state.data.traces = [t];
+    state.pages.traces = 1;
+    renderTracesTable();
+    toast(`已加载 trace: ${traceId.slice(0, 12)}...`, 'info');
+  } catch (e) {
+    toast('加载 trace 失败: ' + e.message, 'error');
+  }
+}
+
+/* ============================================================
+   Page 3: Traces
+   ============================================================ */
+async function loadTraces() {
+  const thread = document.getElementById('filter-thread').value.trim();
+  const limit = document.getElementById('filter-limit').value;
+  let url = `/api/traces?limit=${limit}`;
+  if (thread) url += `&thread_id=${encodeURIComponent(thread)}`;
+  const wrap = document.getElementById('traces-table-wrap');
+  wrap.innerHTML = '<div class="empty-state">加载中...</div>';
+  try {
+    const r = await api(url);
+    state.data.traces = (r.traces || []).slice().reverse(); // newest first
+    state.pages.traces = 1;
+    state.expandedTrace = null;
+    renderTracesTable();
+  } catch (e) {
+    toast('加载 trace 失败: ' + e.message, 'error');
+    wrap.innerHTML = `<div class="empty-state">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderTracesTable() {
+  const wrap = document.getElementById('traces-table-wrap');
+  const data = state.data.traces;
+  if (!data.length) {
+    wrap.innerHTML = '<div class="empty-state">无符合条件的 trace</div>';
+    return;
+  }
+  const pageSize = PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
+  if (state.pages.traces > totalPages) state.pages.traces = totalPages;
+  const start = (state.pages.traces - 1) * pageSize;
+  const pageData = data.slice(start, start + pageSize);
+
+  let html = '<div class="table-wrap"><table class="table"><thead><tr>';
+  html += '<th style="width: 12%;">Trace ID</th><th style="width: 14%;">Thread</th><th>用户输入</th><th style="width: 8%;">延迟</th><th style="width: 6%;">步数</th><th style="width: 8%;">Tokens</th><th style="width: 7%;">成本</th><th style="width: 8%;">状态</th>';
+  html += '</tr></thead><tbody>';
+  pageData.forEach(t => {
+    const isExpanded = state.expandedTrace === t.trace_id;
+    const tokens = (t.total_tokens_in || 0) + (t.total_tokens_out || 0);
+    const statusTag = t.error ? '<span class="tag tag-danger">error</span>' : '<span class="tag tag-success">ok</span>';
+    html += `<tr class="clickable" data-trace-id="${escapeHtml(t.trace_id)}">
+      <td class="td-mono">${escapeHtml((t.trace_id || '').slice(0, 12))}...</td>
+      <td class="td-mono" title="${escapeHtml(t.thread_id || '')}">${escapeHtml((t.thread_id || '-').slice(0, 16))}</td>
+      <td class="td-truncate" title="${escapeHtml(t.user_input || t.error || '')}">${escapeHtml((t.user_input || t.error || '-').slice(0, 80))}</td>
+      <td class="td-num">${fmtMs(t.total_latency_ms)} ms</td>
+      <td class="td-num">${t.num_steps || 0}</td>
+      <td class="td-num">${fmtNum(tokens)}</td>
+      <td class="td-num">$${fmtNum(t.total_cost_usd, 5)}</td>
+      <td>${statusTag}</td>
+    </tr>`;
+    if (isExpanded) {
+      // Use a consistent ID sanitization (strip non [A-Za-z0-9_-]) in both
+      // creation and lookup. Previously creation used escapeHtml (which
+      // produces HTML entities like &amp;) while lookup used CSS.escape
+      // (which produces CSS escapes like \&). For trace_ids containing &,
+      // <, >, ", ' these produced DIFFERENT strings and getElementById
+      // failed — the detail panel showed "加载中..." forever. Trace IDs
+      // are normally UUIDs (safe chars only) so this was latent, but the
+      // mismatch is a real bug.
+      const safeTraceId = (t.trace_id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      html += `<tr class="trace-detail-row"><td colspan="8"><div class="trace-detail-inner" id="trace-detail-${safeTraceId}"><div class="empty-state">加载中...</div></div></td></tr>`;
+    }
+  });
+  html += '</tbody></table></div>';
+  html += renderPaginationBar(data.length, state.pages.traces, pageSize);
+  wrap.innerHTML = html;
+  // Scope pagination binding to this wrap (see renderPaginatedTable).
+  const tracesTotalPages = totalPages;
+  wrap.querySelectorAll('.pagination .page-btn[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = parseInt(btn.dataset.page);
+      if (!isNaN(p) && p >= 1 && p <= tracesTotalPages && p !== state.pages.traces) {
+        state.pages.traces = p;
+        state.expandedTrace = null;
+        renderTracesTable();
+      }
+    });
+  });
+  // Bind row clicks to toggle detail
+  wrap.querySelectorAll('tr.clickable[data-trace-id]').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const tid = tr.dataset.traceId;
+      if (state.expandedTrace === tid) {
+        state.expandedTrace = null;
+        renderTracesTable();
+      } else {
+        state.expandedTrace = tid;
+        renderTracesTable();
+        loadTraceDetail(tid);
+      }
+    });
+  });
+}
+
+async function loadTraceDetail(traceId) {
+  // Match the sanitization used when the element was created in
+  // renderTracesTable (see comment there). Consistent sanitization on
+  // both sides is what makes getElementById actually find the element.
+  const safeId = (traceId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const el = document.getElementById('trace-detail-' + safeId);
+  if (!el) return;
+  try {
+    const t = await api(`/api/traces/${encodeURIComponent(traceId)}`);
+    const stepsHtml = (t.steps || []).map((s, i) => renderStepItem(s, i)).join('') || '<div style="color:var(--color-text-muted);font-size:12px;">无步骤记录</div>';
+    el.innerHTML = `
+      <div class="trace-detail-section">
+        <div class="trace-detail-label">元数据</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+          <div class="trace-detail-box"><div style="font-size:11px;color:var(--color-text-muted);">总延迟</div><div class="mono" style="font-weight:600;">${fmtMs(t.total_latency_ms)} ms</div></div>
+          <div class="trace-detail-box"><div style="font-size:11px;color:var(--color-text-muted);">步骤数</div><div class="mono" style="font-weight:600;">${t.num_steps || (t.steps||[]).length}</div></div>
+          <div class="trace-detail-box"><div style="font-size:11px;color:var(--color-text-muted);">Tokens (in/out)</div><div class="mono" style="font-weight:600;">${fmtNum(t.total_tokens_in)} / ${fmtNum(t.total_tokens_out)}</div></div>
+          <div class="trace-detail-box"><div style="font-size:11px;color:var(--color-text-muted);">总成本</div><div class="mono" style="font-weight:600;">$${fmtNum(t.total_cost_usd, 5)}</div></div>
+        </div>
+        <div class="trace-detail-label">用户输入</div>
+        <div class="trace-detail-box user">${escapeHtml(t.user_input || '-')}</div>
+        <div class="trace-detail-label" style="margin-top:12px;">最终回答</div>
+        <div class="trace-detail-box markdown-body">${renderMarkdown(t.final_answer || (t.error ? '错误: ' + t.error : '-'))}</div>
+      </div>
+      <div class="trace-detail-section">
+        <div class="trace-detail-label">推理步骤时间线 (${(t.steps||[]).length})</div>
+        <div class="steps-timeline">${stepsHtml}</div>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderStepItem(s, i) {
+  // Tolerate both spec shape ({type:"llm"|"tool", result_preview}) and legacy ({type:"llm_call"|"tool_call", result/preview})
+  const rawType = (s.type || '').toLowerCase();
+  const isLlm = rawType === 'llm' || rawType === 'llm_call' || rawType === 'ai_message';
+  const isTool = rawType === 'tool' || rawType === 'tool_call' || rawType === 'tool_result';
+  const cls = isLlm ? 'llm' : (isTool ? 'tool' : '');
+  const typeLabel = isLlm ? 'LLM' : (isTool ? 'TOOL' : (s.type || 'step'));
+  const typeTag = isLlm ? 'tag-info' : (isTool ? 'tag-warning' : 'tag');
+  const name = s.name || (isLlm ? 'llm_call' : 'tool_call');
+  const preview = s.result_preview || s.preview || s.result || '';
+  const tokens = `${s.tokens_in || 0}/${s.tokens_out || 0}`;
+  const cost = '$' + fmtNum(s.cost_usd || 0, 5);
+  return `<div class="step-item ${cls}">
+    <div class="step-head">
+      <span class="tag ${typeTag} mono">#${i + 1}</span>
+      <span class="tag tag-outline mono">${escapeHtml(typeLabel)}</span>
+      <span class="step-name">${escapeHtml(name)}</span>
+      <span class="step-meta">
+        <span>${fmtMs(s.latency_ms)}ms</span>
+        <span>tok ${tokens}</span>
+        <span>${cost}</span>
+      </span>
+    </div>
+    ${preview ? `<div class="step-preview">${escapeHtml(String(preview).slice(0, 400))}${String(preview).length > 400 ? '\n...' : ''}</div>` : ''}
+  </div>`;
+}
+
+/* ============================================================
+   Page 4: Agents
+   ============================================================ */
+async function loadAgents() {
+  const body = document.getElementById('agents-body');
+  body.innerHTML = '<div class="empty-state">加载中...</div>';
+  try {
+    const r = await api('/api/metrics/agents');
+    const routes = r.routes || [];
+    state.data.agents = routes;
+    const summary = document.getElementById('agents-summary');
+    if (!r.available || routes.length === 0) {
+      summary.textContent = '暂无多 agent 路由数据';
+      body.innerHTML = `<div class="empty-state">
+        <div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6"/></svg></div>
+        <div>暂无多 agent 路由数据</div>
+        <div style="margin-top:8px;font-size:11px;">trace 中未检测到 route 字段。此页为多 agent 架构预留，数据为空时显示此占位。</div>
+      </div>`;
+      return;
+    }
+    summary.textContent = `共 ${routes.length} 条路由 · 总调用 ${routes.reduce((s, r) => s + (r.count || 0), 0)} 次`;
+    // Pie chart + table
+    body.innerHTML = `
+      <div class="chart-grid" style="margin-bottom:0;">
+        <div>
+          <div class="chart-container"><canvas id="chart-agents-pie"></canvas></div>
+        </div>
+        <div>
+          <div id="agents-table-wrap"></div>
+        </div>
+      </div>
+    `;
+    renderAgentsPie(routes);
+    renderAgentsTable(routes);
+  } catch (e) {
+    body.innerHTML = `<div class="empty-state">加载失败: ${escapeHtml(e.message)}</div>`;
+    toast('Agent 监控加载失败: ' + e.message, 'error');
+  }
+}
+
+function renderAgentsPie(routes) {
+  const canvasId = 'chart-agents-pie';
+  destroyChart(canvasId);
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  const labels = routes.map(r => r.route || 'unknown');
+  const data = routes.map(r => r.count || 0);
+  const palette = ['#0d9488', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444', '#10b981', '#ec4899', '#6366f1'];
+  state.charts[canvasId] = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: labels.map((_, i) => palette[i % palette.length]), borderColor: '#fff', borderWidth: 2 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 500 },
+      cutout: '58%',
+      plugins: {
+        legend: { position: 'right', labels: { color: '#4b5563', font: { size: 12 }, boxWidth: 12, boxHeight: 12, padding: 10 } },
+        tooltip: { backgroundColor: '#111827', padding: 10, cornerRadius: 6, callbacks: { label: c => { const total = c.dataset.data.reduce((s, v) => s + v, 0); const pct = total > 0 ? Math.round(c.parsed / total * 100) : 0; return ` ${c.label}: ${c.parsed} (${pct}%)`; } } }
+      }
+    }
+  });
+}
+
+function renderAgentsTable(routes) {
+  const wrap = document.getElementById('agents-table-wrap');
+  if (!routes.length) { wrap.innerHTML = '<div class="empty-state">无路由数据</div>'; return; }
+  let html = '<div class="table-wrap"><table class="table"><thead><tr><th>路由</th><th>调用次数</th><th>平均延迟</th><th>平均步数</th><th>错误数</th></tr></thead><tbody>';
+  routes.forEach(r => {
+    html += `<tr>
+      <td><span class="tag tag-primary mono">${escapeHtml(r.route || '-')}</span></td>
+      <td class="td-num">${fmtNum(r.count)}</td>
+      <td class="td-num">${fmtMs(r.avg_latency_ms)} ms</td>
+      <td class="td-num">${fmtNum(r.avg_steps, 1)}</td>
+      <td class="td-num">${fmtNum(r.error_count)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  wrap.innerHTML = html;
+}
+
+/* ============================================================
+   Page 5: KB
+   ============================================================ */
+async function loadKbDocuments() {
+  const wrap = document.getElementById('kb-docs-table-wrap');
+  wrap.innerHTML = '<div class="empty-state">加载中...</div>';
+  try {
+    const r = await api('/api/kb/documents?limit=200');
+    document.getElementById('kb-docs-count').textContent = `共 ${r.count} 个片段`;
+    state.data.kbDocs = r.documents || [];
+    state.pages.kb = 1;
+    renderKbDocsTable();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderKbDocsTable() {
+  const wrap = document.getElementById('kb-docs-table-wrap');
+  const data = state.data.kbDocs;
+  if (!data.length) {
+    wrap.innerHTML = '<div class="empty-state">知识库为空，请上传文档或灌入样本</div>';
+    return;
+  }
+  renderPaginatedTable(wrap, data, state.pages.kb, (d, i) => {
+    const meta = d.metadata || {};
+    const source = meta.source || meta.file || meta.filename || '-';
+    const metaStr = Object.entries(meta).filter(([k]) => !['source','file','filename'].includes(k)).map(([k,v]) => `${k}=${v}`).join(', ');
+    return `<tr>
+      <td class="td-num">${i + 1}</td>
+      <td class="td-truncate" style="max-width:420px;" title="${escapeHtml((d.content||'').slice(0,200))}">${escapeHtml((d.content || '').slice(0, 100))}${(d.content||'').length > 100 ? '...' : ''}</td>
+      <td><span class="tag tag-outline mono">${escapeHtml(source)}</span>${metaStr ? `<div style="font-size:11px;color:var(--color-text-muted);margin-top:3px;" class="mono">${escapeHtml(metaStr)}</div>` : ''}</td>
+      <td><span class="tag">—</span></td>
+    </tr>`;
+  }, ['#', '内容预览', 'metadata', '操作']);
+}
+
+async function kbSearch() {
+  const q = document.getElementById('kb-search-input').value.trim();
+  const k = document.getElementById('kb-search-k').value;
+  if (!q) { toast('请输入查询语句', 'warning'); return; }
+  const results = document.getElementById('kb-search-results');
+  results.innerHTML = '<div class="empty-state">检索中...</div>';
+  try {
+    const r = await api(`/api/kb/search?q=${encodeURIComponent(q)}&k=${k}`);
+    const hits = r.hits || [];
+    if (!hits.length) { results.innerHTML = '<div class="empty-state">无命中片段</div>'; return; }
+    results.innerHTML = hits.map((h, i) => `
+      <div class="kb-hit">
+        <div class="kb-hit-head">
+          <span class="tag tag-primary">#${i + 1}</span>
+          <span class="mono" style="font-size:11px;color:var(--color-text-muted);">${escapeHtml(h.metadata?.source || h.metadata?.file || '-')}</span>
+        </div>
+        <div class="kb-hit-content">${escapeHtml(h.content || '')}</div>
+      </div>
+    `).join('');
+    toast(`命中 ${hits.length} 个片段`, 'success');
+  } catch (e) {
+    results.innerHTML = `<div class="empty-state">检索失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function uploadFiles(files) {
+  if (!files || !files.length) return;
+  const fd = new FormData();
+  let valid = 0;
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB — matches the upload-zone hint
+  let skipped = 0;
+  for (const f of files) {
+    if (!/\.(txt|md)$/i.test(f.name)) { skipped++; continue; }
+    if (f.size > MAX_FILE_SIZE) {
+      toast(`文件 ${f.name} 超过 5MB 限制（${(f.size / 1024 / 1024).toFixed(1)}MB），已跳过`, 'warning');
+      skipped++;
+      continue;
+    }
+    fd.append('files', f); valid++;
+  }
+  if (!valid) {
+    if (skipped) toast('没有符合条件的文件可上传', 'warning');
+    return;
+  }
+  toast(`正在上传 ${valid} 个文件...`, 'info');
+  try {
+    const r = await api('/api/kb/upload', { method: 'POST', body: fd });
+    const total = Array.isArray(r) ? r.reduce((s, x) => s + (x.chunks || 0), 0) : 0;
+    toast(`上传完成，共切分 ${total} 个片段`, 'success');
+    loadKbDocuments();
+  } catch (e) {
+    toast('上传失败: ' + e.message, 'error');
+  }
+}
+
+async function ingestSamples() {
+  toast('正在灌入样本数据...', 'info');
+  try {
+    await api('/api/kb/ingest-samples', { method: 'POST' });
+    toast('样本数据已灌入', 'success');
+    loadKbDocuments();
+  } catch (e) {
+    toast('灌入失败: ' + e.message, 'error');
+  }
+}
+
+/* ============================================================
+   Page 6: Flywheel
+   ============================================================ */
+async function loadFlywheel() {
+  try {
+    const r = await api('/api/flywheel/stats');
+    const stats = r.stats || { good: 0, bad: 0 };
+    const good = stats.good || 0;
+    const bad = stats.bad || 0;
+    const total = good + bad;
+    document.getElementById('fw-good').textContent = fmtNum(good);
+    document.getElementById('fw-bad').textContent = fmtNum(bad);
+    document.getElementById('fw-total').textContent = fmtNum(total);
+    document.getElementById('fw-good-rate').textContent = total > 0 ? ((good / total) * 100).toFixed(1) + '%' : '—';
+    document.getElementById('bad-count-label').textContent = `共 ${bad} 条`;
+    document.getElementById('good-count-label').textContent = `共 ${good} 条`;
+    state.data.badCases = r.recent_bad || [];
+    state.data.goodCases = r.recent_good || [];
+    state.pages.bad = 1;
+    state.pages.good = 1;
+    renderCases('bad-cases-list', state.data.badCases, 'bad');
+    renderCases('good-cases-list', state.data.goodCases, 'good');
+  } catch (e) {
+    toast('飞轮数据加载失败: ' + e.message, 'error');
+  }
+}
+
+function renderCases(elId, cases, type) {
+  const el = document.getElementById(elId);
+  if (!cases.length) {
+    el.innerHTML = `<div class="empty-state">暂无${type === 'bad' ? '差评' : '好评'}案例</div>`;
+    return;
+  }
+  el.innerHTML = cases.map(c => {
+    const traceId = c.metadata?.trace_id || c.trace_id || '';
+    return `<div class="flywheel-case">
+      <div class="flywheel-case-head">
+        <span class="tag ${type === 'bad' ? 'tag-danger' : 'tag-success'}">${type === 'bad' ? 'BAD' : 'GOOD'}</span>
+        <span class="mono" style="font-size:11px;color:var(--color-text-muted);">${formatTime(c.timestamp)}</span>
+      </div>
+      <div class="flywheel-case-q">Q: ${escapeHtml((c.user_input || '').slice(0, 140))}</div>
+      <div class="flywheel-case-a">A: ${escapeHtml((c.prediction || '').slice(0, 220))}</div>
+      <div class="flywheel-case-meta">
+        ${traceId ? `<a class="btn-link" data-trace="${escapeHtml(traceId)}" title="跳转 Trace 诊断">trace: ${escapeHtml(traceId.slice(0, 12))}...</a>` : ''}
+        ${c.expected ? `<span>expected: ${escapeHtml(String(c.expected).slice(0, 30))}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('a[data-trace]').forEach(a => {
+    a.addEventListener('click', () => {
+      const tid = a.dataset.trace;
+      switchPage('traces');
+      document.getElementById('filter-thread').value = '';
+      setTimeout(() => { loadTracesForTrace(tid); }, 50);
+    });
+  });
+}
+
+async function postTrain() {
+  const btn = document.getElementById('post-train-btn');
+  const result = document.getElementById('post-train-result');
+  btn.disabled = true;
+  btn.textContent = '构建中...';
+  result.innerHTML = '<div class="empty-state">正在生成 SFT / DPO artefacts...</div>';
+  try {
+    const r = await api('/api/flywheel/post-train', { method: 'POST' });
+    const artefacts = r.artefacts || {};
+    const paths = Array.isArray(artefacts) ? artefacts : Object.values(artefacts);
+    result.innerHTML = `
+      <div style="padding:12px;background:var(--color-success-bg);border-radius:6px;margin-bottom:10px;">
+        <div style="font-weight:600;color:var(--color-success);margin-bottom:4px;">训练集已生成</div>
+        <div style="font-size:12px;color:var(--color-text-secondary);">共 ${paths.length} 个 artefacts，可下载后上传至 LLM 平台微调。</div>
+      </div>
+      <table class="table"><thead><tr><th>文件路径</th><th style="width:120px;">状态</th></tr></thead><tbody>
+        ${paths.map(p => `<tr><td class="mono" style="font-size:12px;">${escapeHtml(p)}</td><td><span class="tag tag-success">已生成</span></td></tr>`).join('')}
+      </tbody></table>
+    `;
+    toast('训练集生成完成', 'success');
+  } catch (e) {
+    result.innerHTML = `<div class="empty-state">生成失败: ${escapeHtml(e.message)}</div>`;
+    toast('生成失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '构建 SFT/DPO 数据集';
+  }
+}
+
+/* ============================================================
+   Page 7: Settings
+   ============================================================ */
+async function loadSettings() {
+  document.getElementById('settings-tenant-input').value = state.tenantId;
+  document.getElementById('settings-collection-name').textContent = `kb_${state.tenantId}`;
+  await refreshHealth();
+}
+
+async function refreshHealth() {
+  const r = await checkHealth();
+  if (r) {
+    document.getElementById('settings-health-status').innerHTML = '<span class="tag tag-success">ok</span>';
+    document.getElementById('settings-health-service').textContent = r.service || '-';
+    document.getElementById('settings-health-version').textContent = r.version || '-';
+    document.getElementById('settings-health-time').textContent = r.time || '-';
+  } else {
+    document.getElementById('settings-health-status').innerHTML = '<span class="tag tag-danger">down</span>';
+    document.getElementById('settings-health-service').textContent = '-';
+    document.getElementById('settings-health-version').textContent = '-';
+    document.getElementById('settings-health-time').textContent = '-';
+  }
+}
+
+// Tenant ID validation — mirrors backend validate_safe_id
+// (^[A-Za-z0-9._-]{1,64}$). Validating client-side avoids a confusing
+// 400 error from the backend when the user types e.g. "../etc" in the
+// tenant switcher. The backend still validates (defense in depth), but
+// a client-side check gives immediate, localized feedback.
+const TENANT_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+function switchTenant() {
+  const v = document.getElementById('settings-tenant-input').value.trim();
+  if (!v) { toast('租户 ID 不能为空', 'warning'); return; }
+  if (!TENANT_ID_PATTERN.test(v)) {
+    toast('租户 ID 只能包含字母、数字、. _ -，最长 64 字符', 'error');
+    return;
+  }
+  state.tenantId = v;
+  localStorage.setItem('0719_admin_tenant', v);
+  document.getElementById('sidebar-tenant-id').textContent = v;
+  document.getElementById('settings-collection-name').textContent = `kb_${v}`;
+  toast(`已切换到租户: ${v}`, 'success');
+  // Reload current page data
+  switchPage(state.currentPage);
+}
+
+/* ============================================================
+   Chart helpers (cached + destroy-before-create)
+   ============================================================ */
+function destroyChart(canvasId) {
+  if (state.charts[canvasId]) {
+    try { state.charts[canvasId].destroy(); } catch (e) {}
+    delete state.charts[canvasId];
+  }
+}
+
+function renderLineChart(canvasId, labels, datasets, unit) {
+  destroyChart(canvasId);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const palette = ['#0d9488', '#f59e0b', '#0ea5e9', '#8b5cf6', '#ef4444'];
+  state.charts[canvasId] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: datasets.map((d, i) => ({
+        label: d.label, data: d.data,
+        borderColor: d.color || palette[i % palette.length],
+        backgroundColor: (d.color || palette[i % palette.length]) + '14',
+        borderWidth: 2, fill: datasets.length === 1, tension: 0.35,
+        pointBackgroundColor: d.color || palette[i % palette.length],
+        pointBorderColor: '#fff', pointBorderWidth: 1.5, pointRadius: 3, pointHoverRadius: 5,
+      }))
+    },
+    options: chartOpts(unit)
+  });
+}
+
+function renderBarChart(canvasId, labels, datasets, unit) {
+  destroyChart(canvasId);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const palette = ['#0d9488', '#0ea5e9', '#f59e0b'];
+  state.charts[canvasId] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: datasets.map((d, i) => ({ label: d.label, data: d.data, backgroundColor: d.color || palette[i % palette.length], borderWidth: 0, borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.7 })) },
+    options: chartOpts(unit)
+  });
+}
+
+function renderStackedBarChart(canvasId, labels, datasets) {
+  destroyChart(canvasId);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const palette = ['#059669', '#dc2626', '#0d9488'];
+  state.charts[canvasId] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: datasets.map((d, i) => ({ label: d.label, data: d.data, backgroundColor: d.color || palette[i % palette.length], borderWidth: 0, borderRadius: 2, stack: 'fb' })) },
+    options: {
+      ...chartOpts(''),
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: '#6b7280' } },
+        y: { stacked: true, grid: { color: '#f3f4f6' }, ticks: { color: '#6b7280', precision: 0 }, beginAtZero: true }
+      }
+    }
+  });
+}
+
+function chartOpts(unit) {
+  return {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 500, easing: 'easeOutQuart' },
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { position: 'bottom', labels: { color: '#4b5563', font: { size: 11 }, boxWidth: 10, boxHeight: 10, padding: 10 } },
+      tooltip: { backgroundColor: '#111827', padding: 10, cornerRadius: 6, callbacks: { label: c => ` ${c.dataset.label}: ${unit === '$' ? '$' : ''}${fmtNum(c.parsed.y)}${unit && unit !== '$' ? ' ' + unit : ''}` } }
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { color: '#6b7280', font: { size: 11 } } },
+      y: { grid: { color: '#f3f4f6' }, ticks: { color: '#6b7280', font: { size: 11 } }, beginAtZero: true }
+    }
+  };
+}
+
+/* ============================================================
+   Pagination & table helpers
+   ============================================================ */
+function renderPaginatedTable(wrap, data, page, rowFn, headers) {
+  const pageSize = PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
+  if (state.pages[tableKeyFor(wrap)] > totalPages) state.pages[tableKeyFor(wrap)] = totalPages;
+  const start = (page - 1) * pageSize;
+  const pageData = data.slice(start, start + pageSize);
+  let html = '<div class="table-wrap"><table class="table"><thead><tr>';
+  headers.forEach(h => html += `<th>${escapeHtml(h)}</th>`);
+  html += '</tr></thead><tbody>';
+  pageData.forEach((item, i) => {
+    html += rowFn(item, start + i);
+  });
+  html += '</tbody></table></div>';
+  html += renderPaginationBar(data.length, page, pageSize);
+  wrap.innerHTML = html;
+  // Scope pagination binding to THIS wrap. Previously used a global
+  // `document.querySelectorAll('.pagination .page-btn[data-page]')` inside
+  // setTimeout, which matched buttons from OTHER concurrently-rendered
+  // tables (e.g. tools + conversations on the dashboard) and attached
+  // every table's onChange to every button — clicking one table's page
+  // button triggered all tables' pagination simultaneously.
+  wrap.querySelectorAll('.pagination .page-btn[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = parseInt(btn.dataset.page);
+      if (!isNaN(p) && p >= 1 && p <= totalPages && p !== page) {
+        state.pages[tableKeyFor(wrap)] = p;
+        renderPaginatedTable(wrap, data, p, rowFn, headers);
+      }
+    });
+  });
+}
+
+// Map wrapper element to state.pages key. Throws on unknown wrap so a
+// future programmer who adds a new paginated table without registering
+// its key here gets a loud failure instead of silently corrupting the
+// tools table's pagination (the previous default 'tools' return value
+// meant any unmapped wrap shared page state with the tools table).
+function tableKeyFor(wrap) {
+  const id = wrap.id;
+  const map = {
+    'tools-table-wrap': 'tools',
+    'conversations-table-wrap': 'conversations',
+    'retrieval-table-wrap': 'retrieval',
+    'kb-docs-table-wrap': 'kb',
+  };
+  const key = map[id];
+  if (!key) {
+    throw new Error(`tableKeyFor: unknown wrap id "${id}". Register it in the map.`);
+  }
+  return key;
+}
+
+function renderPaginationBar(total, page, pageSize) {
+  // Pure HTML builder — callers are responsible for scoping button
+  // binding to their own wrap element (see renderPaginatedTable /
+  // renderTracesTable). Previously this function took an `onChange`
+  // callback and bound clicks via a global setTimeout selector, which
+  // caused cross-table handler leakage.
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+  let html = '<div class="pagination">';
+  html += `<div class="pagination-info">${start}-${end} / ${total}</div>`;
+  html += '<div class="pagination-controls">';
+  html += `<button class="page-btn" ${page <= 1 ? 'disabled' : ''} data-page="${page - 1}">‹</button>`;
+  // Page numbers: show up to 5 around current
+  let pStart = Math.max(1, page - 2);
+  let pEnd = Math.min(totalPages, pStart + 4);
+  pStart = Math.max(1, pEnd - 4);
+  if (pStart > 1) { html += `<button class="page-btn" data-page="1">1</button>`; if (pStart > 2) html += `<span style="padding:0 2px;color:var(--color-text-muted);">…</span>`; }
+  for (let p = pStart; p <= pEnd; p++) {
+    html += `<button class="page-btn ${p === page ? 'active' : ''}" data-page="${p}">${p}</button>`;
+  }
+  if (pEnd < totalPages) { if (pEnd < totalPages - 1) html += `<span style="padding:0 2px;color:var(--color-text-muted);">…</span>`; html += `<button class="page-btn" data-page="${totalPages}">${totalPages}</button>`; }
+  html += `<button class="page-btn" ${page >= totalPages ? 'disabled' : ''} data-page="${page + 1}">›</button>`;
+  html += '</div></div>';
+  return html;
+}
+
+/* ============================================================
+   Utils
+   ============================================================ */
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+function fmtNum(n, d = 0) {
+  if (n == null || isNaN(n)) return '—';
+  const num = Number(n);
+  if (num >= 10000) return num.toLocaleString('en-US', { maximumFractionDigits: d });
+  // Bug fix: original regex /\.?0+$/ stripped trailing zeros from INTEGERS
+  // too (1000 -> "1", 100 -> "1"). Only strip fractional trailing zeros.
+  if (d === 0) return String(Math.round(num));
+  return num.toFixed(d).replace(/0+$/, '').replace(/\.$/, '');
+}
+function fmtMs(ms) {
+  if (ms == null || isNaN(ms)) return '—';
+  return Math.round(Number(ms)).toLocaleString('en-US');
+}
+function fmtPct(v) {
+  if (v == null || isNaN(v)) return '—';
+  return (Number(v) * 100).toFixed(1) + '%';
+}
+function formatTime(s) {
+  if (!s) return '-';
+  try {
+    // typeof check previously had identical branches (new Date(s) on both
+    // sides) — collapsed to a single call. Date constructor accepts both
+    // numbers (epoch ms) and ISO strings.
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return String(s).slice(0, 19);
+    const now = new Date();
+    const diff = (now - d) / 1000;
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+    if (diff < 86400 * 7) return Math.floor(diff / 86400) + ' 天前';
+    return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return String(s); }
+}
+function renderMarkdown(text) {
+  if (!text) return '<span style="color:var(--color-text-muted);font-style:italic;">（无内容）</span>';
+  try {
+    if (window.marked) marked.setOptions({ breaks: true, gfm: true });
+    // Security: never return raw (even marked output) when DOMPurify is
+    // unavailable — trace final_answer can contain arbitrary HTML.
+    const raw = window.marked ? marked.parse(text) : escapeHtml(text).replace(/\n/g, '<br>');
+    return window.DOMPurify ? DOMPurify.sanitize(raw) : escapeHtml(text).replace(/\n/g, '<br>');
+  } catch (e) {
+    return escapeHtml(text).replace(/\n/g, '<br>');
+  }
+}
+
+/* ============================================================
+   Auto-refresh (dashboard, 30s, pausable)
+   ============================================================ */
+function setAutoRefresh(on) {
+  state.autoRefresh = on;
+  const toggle = document.getElementById('auto-refresh-toggle');
+  const text = document.getElementById('auto-refresh-text');
+  if (on) {
+    toggle.classList.add('on');
+    text.textContent = '自动刷新';
+    if (state.autoRefreshTimer) clearInterval(state.autoRefreshTimer);
+    state.autoRefreshTimer = setInterval(() => {
+      if (state.currentPage === 'dashboard') loadDashboard();
+    }, 30000);
+  } else {
+    toggle.classList.remove('on');
+    text.textContent = '已暂停';
+    if (state.autoRefreshTimer) { clearInterval(state.autoRefreshTimer); state.autoRefreshTimer = null; }
+  }
+}
+
+/* ============================================================
+   Event binding & init
+   ============================================================ */
+function bindEvents() {
+  // Navigation
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.addEventListener('click', () => switchPage(el.dataset.page));
+  });
+  // Auto-refresh toggle
+  document.getElementById('auto-refresh-toggle').addEventListener('click', () => {
+    setAutoRefresh(!state.autoRefresh);
+    toast(state.autoRefresh ? '已开启自动刷新' : '已暂停自动刷新', 'info');
+  });
+  // Dashboard
+  document.getElementById('trend-range').addEventListener('change', loadDashboard);
+  document.getElementById('dashboard-refresh-btn').addEventListener('click', loadDashboard);
+  // Retrieval
+  document.getElementById('retrieval-refresh-btn').addEventListener('click', loadRetrieval);
+  // Traces
+  document.getElementById('traces-refresh-btn').addEventListener('click', loadTraces);
+  document.getElementById('filter-apply-btn').addEventListener('click', loadTraces);
+  document.getElementById('filter-thread').addEventListener('keydown', e => {
+    if (e.key === 'Enter') loadTraces();
+  });
+  // Agents
+  document.getElementById('agents-refresh-btn').addEventListener('click', loadAgents);
+  // KB
+  document.getElementById('kb-search-btn').addEventListener('click', kbSearch);
+  document.getElementById('kb-search-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') kbSearch();
+  });
+  document.getElementById('kb-refresh-btn').addEventListener('click', loadKbDocuments);
+  document.getElementById('ingest-samples-btn').addEventListener('click', ingestSamples);
+  const uploadZone = document.getElementById('upload-zone');
+  const fileInput = document.getElementById('file-input');
+  uploadZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => { uploadFiles(fileInput.files); fileInput.value = ''; });
+  uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+  uploadZone.addEventListener('drop', e => {
+    e.preventDefault(); uploadZone.classList.remove('dragover');
+    uploadFiles(e.dataTransfer.files);
+  });
+  // Flywheel
+  document.getElementById('flywheel-refresh-btn').addEventListener('click', loadFlywheel);
+  document.getElementById('post-train-btn').addEventListener('click', postTrain);
+  // Settings
+  document.getElementById('settings-tenant-save').addEventListener('click', switchTenant);
+  document.getElementById('settings-tenant-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') switchTenant();
+  });
+  document.getElementById('settings-health-btn').addEventListener('click', refreshHealth);
+  document.getElementById('settings-clear-local-btn').addEventListener('click', () => {
+    localStorage.removeItem('0719_admin_tenant');
+    state.tenantId = 'demo-tenant';
+    document.getElementById('settings-tenant-input').value = 'demo-tenant';
+    document.getElementById('sidebar-tenant-id').textContent = 'demo-tenant';
+    document.getElementById('settings-collection-name').textContent = 'kb_demo-tenant';
+    toast('本地租户缓存已清空', 'success');
+    switchPage(state.currentPage);
+  });
+}
+
+function init() {
+  document.getElementById('sidebar-tenant-id').textContent = state.tenantId;
+  bindEvents();
+  checkHealth();
+  state.healthTimer = setInterval(checkHealth, 30000);
+  setAutoRefresh(true);
+  // Initial dashboard load
+  loadDashboard();
+}
+
+init();
+</script>
+</body>
+</html>

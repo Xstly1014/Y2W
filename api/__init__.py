@@ -7,8 +7,6 @@ service web app.
 Run standalone:
     python -m api.server
 
-This service is now **API-only** — the user-facing UI lives exclusively
-in the standalone e-commerce service (port 8002 → ``/shop``) and
-proxies chat traffic here via ``/api/chat/stream``. There is no HTML
-page on port 8000; ``GET /`` returns 404.
+The static front-end lives in `static/index.html` and is served at `/`
+automatically.
 """

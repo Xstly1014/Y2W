@@ -1,0 +1,2258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0719agent · 智能客服</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
+<style>
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
+
+  --color-bg: #f7f8fa;
+  --color-bg-elevated: #ffffff;
+  --color-surface: #ffffff;
+  --color-sidebar: #ffffff;
+  --color-border: #e8eaed;
+  --color-border-strong: #d8dce1;
+  --color-divider: #f1f3f5;
+
+  --color-text: #1a1d23;
+  --color-text-secondary: #4a5160;
+  --color-text-tertiary: #6b7280;
+  --color-text-muted: #9ca3af;
+
+  --color-primary: #0d9488;
+  --color-primary-hover: #0f766e;
+  --color-primary-active: #115e56;
+  --color-primary-light: #ccfbf1;
+  --color-primary-bg: #f0fdfa;
+  --color-primary-gradient: linear-gradient(135deg, #0d9488 0%, #14b8a6 100%);
+
+  --color-success: #059669;
+  --color-success-bg: #ecfdf5;
+  --color-warning: #d97706;
+  --color-warning-bg: #fffbeb;
+  --color-danger: #dc2626;
+  --color-danger-bg: #fef2f2;
+
+  --color-thinking-bg: #f8fafc;
+  --color-thinking-border: #e2e8f0;
+
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+  --shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.06), 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.07), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.05);
+  --shadow-xl: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.06);
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --text-3xl: 28px;
+
+  --transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+button, input, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: none; }
+a { color: var(--color-primary); text-decoration: none; }
+a:hover { color: var(--color-primary-hover); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   Layout
+   ============================================================ */
+.app {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  background: var(--color-sidebar);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: transform var(--transition);
+}
+.sidebar-header {
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--color-divider);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.brand-logo {
+  width: 38px; height: 38px;
+  background: var(--color-primary-gradient);
+  border-radius: var(--radius-lg);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: var(--text-md);
+  letter-spacing: -0.5px; flex-shrink: 0;
+  box-shadow: 0 4px 10px rgba(13, 148, 136, 0.25);
+}
+.brand-text { min-width: 0; }
+.brand-title {
+  font-size: var(--text-md); font-weight: 700; color: var(--color-text);
+  line-height: 1.2; letter-spacing: -0.3px;
+}
+.brand-sub {
+  font-size: var(--text-xs); color: var(--color-text-muted);
+  margin-top: 2px;
+}
+.new-chat-btn {
+  width: 34px; height: 34px;
+  border-radius: var(--radius);
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  display: flex; align-items: center; justify-content: center;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.new-chat-btn:hover {
+  background: var(--color-primary);
+  color: #fff;
+  transform: rotate(90deg);
+}
+
+.conversation-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.conversation-item {
+  padding: var(--space-3) var(--space-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+  border: 1px solid transparent;
+}
+.conversation-item:hover {
+  background: var(--color-bg);
+  border-color: var(--color-border);
+}
+.conversation-item.active {
+  background: var(--color-primary-bg);
+  border-color: rgba(13, 148, 136, 0.2);
+}
+.conv-title {
+  font-size: var(--text-sm); font-weight: 500; color: var(--color-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+.conv-preview {
+  font-size: var(--text-xs); color: var(--color-text-tertiary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+.conv-meta {
+  font-size: 11px; color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.sidebar-footer {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-divider);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.tenant-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  padding: 6px 10px; border-radius: var(--radius);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tenant-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-success); flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15);
+}
+.admin-link {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-xs);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+}
+.admin-link:hover {
+  background: var(--color-bg);
+  color: var(--color-primary);
+}
+
+/* ---------- Main ---------- */
+.main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  background: var(--color-bg);
+}
+
+.topbar {
+  height: 64px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-6);
+  flex-shrink: 0;
+}
+.topbar-left { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.topbar-title {
+  font-size: var(--text-lg); font-weight: 600; color: var(--color-text);
+  letter-spacing: -0.3px;
+}
+.topbar-sub {
+  font-size: var(--text-xs); color: var(--color-text-muted);
+  margin-top: 2px; font-family: var(--font-mono);
+}
+.topbar-right { display: flex; align-items: center; gap: var(--space-3); }
+
+.model-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: var(--text-xs); font-weight: 500;
+  background: var(--color-primary-bg); color: var(--color-primary-active);
+  border: 1px solid rgba(13, 148, 136, 0.15);
+  font-family: var(--font-mono);
+}
+
+.health-indicator {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 999px;
+  font-size: var(--text-xs); font-weight: 500;
+  background: var(--color-success-bg); color: var(--color-success);
+  border: 1px solid rgba(5, 150, 105, 0.2);
+}
+.health-indicator .pulse {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--color-success);
+  animation: pulse 2s infinite;
+}
+.health-indicator.degraded {
+  background: var(--color-warning-bg); color: var(--color-warning);
+  border-color: rgba(217, 119, 6, 0.2);
+}
+.health-indicator.degraded .pulse { background: var(--color-warning); }
+.health-indicator.down {
+  background: var(--color-danger-bg); color: var(--color-danger);
+  border-color: rgba(220, 38, 38, 0.2);
+}
+.health-indicator.down .pulse { background: var(--color-danger); animation: none; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+/* ---------- Chat area ---------- */
+.chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  scroll-behavior: smooth;
+}
+
+/* ---------- Empty state ---------- */
+.empty-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-8);
+  gap: var(--space-4);
+}
+.empty-avatar {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  background: var(--color-primary-gradient);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 25px rgba(13, 148, 136, 0.25);
+  overflow: hidden;
+  margin-bottom: var(--space-2);
+}
+.empty-avatar img {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.empty-avatar.avatar-fallback {
+  color: #fff; font-size: var(--text-2xl); font-weight: 700;
+}
+.empty-title {
+  font-size: var(--text-2xl); font-weight: 700; color: var(--color-text);
+  letter-spacing: -0.5px;
+}
+.empty-sub {
+  font-size: var(--text-base); color: var(--color-text-tertiary);
+  max-width: 480px; line-height: 1.6;
+}
+.example-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  max-width: 560px;
+  width: 100%;
+}
+.example-btn {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-4) var(--space-4);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm); color: var(--color-text-secondary);
+  text-align: left;
+  transition: all var(--transition);
+  box-shadow: var(--shadow-sm);
+}
+.example-btn:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+  color: var(--color-primary-active);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.example-icon {
+  width: 18px; height: 18px; flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+/* ---------- Messages ---------- */
+.message {
+  display: flex;
+  gap: var(--space-3);
+  max-width: 880px;
+  margin: 0 auto;
+  width: 100%;
+  animation: msgIn 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.message-user {
+  flex-direction: row-reverse;
+}
+.msg-avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-sm); font-weight: 600;
+  overflow: hidden;
+}
+.msg-avatar img {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.msg-avatar.avatar-fallback {
+  color: #fff; font-weight: 700;
+}
+.message-ai .msg-avatar {
+  background: var(--color-primary-gradient);
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(13, 148, 136, 0.2);
+}
+.message-user .msg-avatar {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  color: #fff;
+}
+
+.msg-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: calc(100% - 52px);
+}
+.message-user .msg-content {
+  align-items: flex-end;
+}
+.msg-name {
+  font-size: var(--text-xs); color: var(--color-text-muted);
+  font-weight: 500;
+  padding: 0 var(--space-1);
+}
+
+.msg-bubble {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-base);
+  line-height: 1.65;
+  word-wrap: break-word;
+  word-break: break-word;
+  position: relative;
+  /* Default (AI bubble) min/max so very short answers still look like a
+     bubble, while long ones don't stretch past ~70% of the chat column. */
+  min-width: 60px;
+  max-width: min(720px, 70%);
+}
+.msg-bubble.user {
+  background: var(--color-primary-gradient);
+  color: #fff;
+  border-bottom-right-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.2);
+  /* User bubble: short questions should still feel like a chat bubble,
+     not a sliver. min-width 80px; padding bumped slightly for visual
+     weight (was 12px x 16px, now 13px x 18px). */
+  min-width: 80px;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-md);
+}
+.msg-bubble.ai {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-bottom-left-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  overflow: hidden;
+}
+/* Subtle teal accent on the left edge so AI bubbles feel distinct from
+   the surrounding grey canvas — without resorting to a heavy border or
+   tinted background that would clash with the user bubble's gradient. */
+.msg-bubble.ai::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--color-primary-gradient);
+  opacity: 0.7;
+}
+.msg-bubble.ai.markdown {
+  max-width: 100%;
+}
+/* Kiki multi-turn: interim answer bubbles shown between the thinking
+   card and the final answer. Slightly smaller font + reduced opacity
+   so the user can visually distinguish "mid-conversation" updates from
+   the final answer. */
+.msg-bubble.interim-answer {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-3);
+  opacity: 0.92;
+}
+.msg-bubble.interim-answer::before {
+  opacity: 0.4;
+}
+.msg-bubble.ai.markdown p {
+  margin-bottom: var(--space-3);
+  line-height: 1.7;
+}
+.msg-bubble.ai.markdown p:last-child { margin-bottom: 0; }
+.msg-bubble.ai.markdown h1,
+.msg-bubble.ai.markdown h2,
+.msg-bubble.ai.markdown h3,
+.msg-bubble.ai.markdown h4 {
+  margin: var(--space-5) 0 var(--space-3);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+}
+.msg-bubble.ai.markdown h1:first-child,
+.msg-bubble.ai.markdown h2:first-child,
+.msg-bubble.ai.markdown h3:first-child { margin-top: 0; }
+.msg-bubble.ai.markdown h1 { font-size: var(--text-xl); }
+.msg-bubble.ai.markdown h2 { font-size: var(--text-lg); }
+.msg-bubble.ai.markdown h3 { font-size: var(--text-md); }
+.msg-bubble.ai.markdown h4 { font-size: var(--text-base); }
+.msg-bubble.ai.markdown ul,
+.msg-bubble.ai.markdown ol {
+  margin: var(--space-3) 0;
+  padding-left: var(--space-5);
+}
+.msg-bubble.ai.markdown li {
+  margin-bottom: var(--space-2);
+  line-height: 1.65;
+}
+.msg-bubble.ai.markdown li:last-child { margin-bottom: 0; }
+.msg-bubble.ai.markdown li > ul,
+.msg-bubble.ai.markdown li > ol { margin: var(--space-2) 0 0; }
+.msg-bubble.ai.markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--color-primary-bg);
+  color: var(--color-primary-active);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+.msg-bubble.ai.markdown pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: var(--space-4) var(--space-4);
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: var(--shadow-md);
+}
+.msg-bubble.ai.markdown pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: var(--text-sm);
+  font-weight: 400;
+  line-height: 1.6;
+}
+.msg-bubble.ai.markdown blockquote {
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-primary-bg);
+  padding: var(--space-2) var(--space-4);
+  margin: var(--space-3) 0;
+  color: var(--color-text-secondary);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.msg-bubble.ai.markdown a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  transition: color var(--transition);
+}
+.msg-bubble.ai.markdown a:hover { color: var(--color-primary-hover); }
+.msg-bubble.ai.markdown hr {
+  border: none;
+  border-top: 1px solid var(--color-divider);
+  margin: var(--space-4) 0;
+}
+.msg-bubble.ai.markdown strong {
+  font-weight: 600;
+  color: var(--color-text);
+}
+.msg-bubble.ai.markdown img {
+  max-width: 100%;
+  border-radius: var(--radius);
+  margin: var(--space-2) 0;
+}
+/* Markdown tables — previously missing, causing "cramped columns" */
+.msg-bubble.ai.markdown table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: var(--space-4) 0;
+  font-size: var(--text-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-bg-elevated);
+}
+.msg-bubble.ai.markdown thead {
+  background: var(--color-bg);
+}
+.msg-bubble.ai.markdown th {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+.msg-bubble.ai.markdown td {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-divider);
+  vertical-align: top;
+  line-height: 1.55;
+}
+.msg-bubble.ai.markdown tr:last-child td { border-bottom: none; }
+.msg-bubble.ai.markdown tbody tr:hover { background: var(--color-bg); }
+.code-copy-btn {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: all var(--transition);
+  backdrop-filter: blur(8px);
+}
+.code-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+.code-copy-btn.copied {
+  background: var(--color-success);
+  border-color: var(--color-success);
+  color: #fff;
+}
+
+/* Typing indicator */
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  padding: var(--space-1) 0;
+}
+.typing-indicator .dot {
+  width: 8px; height: 8px;
+  background: var(--color-text-muted);
+  border-radius: 50%;
+  animation: typing 1.4s infinite ease-in-out;
+}
+.typing-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ---------- Thinking card (Kiki-style progress list) ---------- */
+.thinking-card {
+  background: var(--color-thinking-bg);
+  border: 1px solid var(--color-thinking-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  font-size: var(--text-xs);
+  width: 100%;
+  max-width: 640px;
+}
+/* Kiki-style: progress list is open by default (no need to click to
+   expand). Header still clickable for power users who want a tidier
+   view. */
+.thinking-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.5);
+}
+.thinking-card-header:hover { background: rgba(255, 255, 255, 0.8); }
+.header-left {
+  display: flex; align-items: center; gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+.chevron { transition: transform var(--transition); }
+.thinking-card:not(.collapsed) .chevron { transform: rotate(90deg); }
+.header-right {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+.thinking-steps {
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.thinking-card.collapsed .thinking-steps { display: none; }
+
+.thinking-step {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-1) 0;
+}
+.step-icon {
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  margin-top: 1px;
+  color: var(--color-text-tertiary);
+}
+.step-icon .check { color: var(--color-success); }
+.spinner {
+  width: 12px; height: 12px;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.step-body {
+  flex: 1; min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: 1.55;
+}
+/* Kiki-style: hide the colored TOOL/LLM/THINK tags; the message text
+   alone describes what the agent is doing. */
+.step-body .step-tag { display: none; }
+.step-message { color: var(--color-text); }
+.step-message.pending { color: var(--color-text-tertiary); }
+.step-meta {
+  font-size: 10px; color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+.step-toggle {
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: 11px;
+  margin-top: 2px;
+  display: inline-block;
+}
+.step-toggle:hover { text-decoration: underline; }
+.step-detail {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--color-bg);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  margin-top: var(--space-1);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* ---------- Action card (Kiki-style "帮我操作" buttons) ---------- */
+.action-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  width: 100%;
+  max-width: 720px;
+}
+.action-card-hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+.action-card-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.action-card-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border: none;
+  border-radius: 999px;
+  background: var(--color-primary-gradient);
+  color: #fff;
+  font-size: var(--text-md);
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.25);
+  transition: transform var(--transition), box-shadow var(--transition), filter var(--transition);
+  user-select: none;
+}
+.action-card-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(13, 148, 136, 0.32);
+  filter: brightness(1.05);
+}
+.action-card-btn:active {
+  transform: translateY(0);
+  filter: brightness(0.97);
+}
+.action-card-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+.action-card-btn .sparkle {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-lg);
+  line-height: 1;
+}
+.action-card-btn.clicked {
+  background: var(--color-success);
+  box-shadow: 0 2px 6px rgba(5, 150, 105, 0.2);
+}
+
+/* Route banner */
+.route-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-primary-bg);
+  border: 1px solid rgba(13, 148, 136, 0.15);
+  border-radius: var(--radius);
+  font-size: var(--text-xs);
+  color: var(--color-primary-active);
+  margin-bottom: var(--space-2);
+}
+.route-icon { display: flex; align-items: center; }
+
+/* ---------- Summary card ---------- */
+.summary-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+.summary-item { display: inline-flex; align-items: center; gap: 3px; }
+.summary-item strong { color: var(--color-text-secondary); font-weight: 600; }
+.summary-sep { color: var(--color-border-strong); }
+
+/* ---------- Message actions ---------- */
+.msg-actions {
+  display: flex;
+  gap: var(--space-1);
+  padding: 0 var(--space-1);
+}
+.msg-action-btn {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  color: var(--color-text-muted);
+  transition: all var(--transition);
+}
+.msg-action-btn:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+  transform: scale(1.1);
+}
+.msg-action-btn.active {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+
+/* ---------- Time divider ---------- */
+.msg-time-divider {
+  text-align: center;
+  margin: var(--space-4) 0;
+  position: relative;
+}
+.msg-time-divider::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  border-top: 1px solid var(--color-divider);
+}
+.msg-time-divider span {
+  position: relative;
+  background: var(--color-bg);
+  padding: 0 var(--space-3);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Input area ---------- */
+.input-area {
+  padding: var(--space-4) var(--space-8) var(--space-6);
+  background: var(--color-bg);
+  flex-shrink: 0;
+}
+.input-wrapper {
+  max-width: 880px;
+  margin: 0 auto;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-2);
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition);
+}
+.input-wrapper:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1), var(--shadow-md);
+}
+.input-box {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  resize: none;
+  max-height: 140px;
+  color: var(--color-text);
+}
+.input-box::placeholder { color: var(--color-text-muted); }
+.send-btn {
+  width: 38px; height: 38px;
+  background: var(--color-primary-gradient);
+  color: #fff;
+  border-radius: var(--radius-lg);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: all var(--transition);
+  box-shadow: 0 4px 10px rgba(13, 148, 136, 0.25);
+}
+.send-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(13, 148, 136, 0.35);
+}
+.send-btn:active:not(:disabled) { transform: translateY(0); }
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.send-btn-text { display: none; }
+.input-hint {
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: var(--space-2);
+}
+
+/* ---------- Toast ---------- */
+#toast-container {
+  position: fixed;
+  top: var(--space-5);
+  right: var(--space-5);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.toast {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  color: #fff;
+  box-shadow: var(--shadow-lg);
+  animation: toastIn 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  max-width: 320px;
+}
+.toast.info { background: #3b82f6; }
+.toast.success { background: var(--color-success); }
+.toast.warning { background: var(--color-warning); }
+.toast.error { background: var(--color-danger); }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ---------- Mobile sidebar toggle ---------- */
+.compact-sidebar-toggle-input { display: none; }
+.compact-hamburger-btn { display: none; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar {
+    position: fixed;
+    left: 0; top: 0; bottom: 0;
+    width: 280px;
+    z-index: 100;
+    transform: translateX(-100%);
+    box-shadow: var(--shadow-xl);
+  }
+  .compact-sidebar-toggle-input:checked ~ .app .sidebar {
+    transform: translateX(0);
+  }
+  .compact-hamburger-btn {
+    display: flex;
+    width: 36px; height: 36px;
+    align-items: center; justify-content: center;
+    border-radius: var(--radius);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .compact-hamburger-btn:hover { background: var(--color-bg); }
+  .messages { padding: var(--space-4); }
+  .input-area { padding: var(--space-3) var(--space-4) var(--space-4); }
+  .example-grid { grid-template-columns: 1fr; }
+  .topbar { padding: 0 var(--space-4); }
+}
+</style>
+</head>
+<body>
+<input type="checkbox" id="compact-sidebar-toggle" class="compact-sidebar-toggle-input" aria-hidden="true">
+<div class="app">
+  <!-- 左侧会话栏 -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="brand">
+        <div class="brand-logo">07</div>
+        <div class="brand-text">
+          <div class="brand-title">0719agent</div>
+          <div class="brand-sub">智能客服</div>
+        </div>
+      </div>
+      <button class="new-chat-btn" id="new-chat-btn" title="新会话">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      </button>
+    </div>
+    <div class="conversation-list" id="conversation-list"></div>
+    <div class="sidebar-footer">
+      <div class="tenant-chip">
+        <span class="tenant-dot"></span>
+        <span>tenant:</span>
+        <span id="tenant-display">demo</span>
+      </div>
+      <a href="/admin" class="admin-link">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>
+        管理后台
+      </a>
+    </div>
+  </aside>
+
+  <!-- 主对话区 -->
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <label for="compact-sidebar-toggle" class="compact-hamburger-btn" title="菜单">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+        </label>
+        <div>
+          <div class="topbar-title">智能客服对话</div>
+          <div class="topbar-sub" id="thread-display">thread: (新会话)</div>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span class="model-chip" id="model-chip" hidden></span>
+        <div class="health-indicator" id="health-indicator">
+          <span class="pulse"></span>
+          <span id="health-text">服务正常</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="chat-area">
+      <div class="messages" id="messages">
+        <!-- 空状态 -->
+        <div class="empty-chat" id="empty-chat">
+          <div class="empty-avatar">
+            <img src="/avatars/ai_avatar.jpg" alt="AI 客服头像" onerror="handleAvatarError(this)">
+          </div>
+          <div class="empty-title">你好，我是你的专属客服</div>
+          <div class="empty-sub">可以问我订单状态、退款进度、物流轨迹、退货政策等。我会调用后台工具为你查询最新信息。</div>
+          <div class="example-grid">
+            <button class="example-btn" data-q="查询订单 1001 的状态">
+              <svg class="example-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+              查询订单 1001 的状态
+            </button>
+            <button class="example-btn" data-q="订单 1001 怎么申请退款？">
+              <svg class="example-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+              订单 1001 怎么申请退款？
+            </button>
+            <button class="example-btn" data-q="你们的退货政策是什么？多少天内可以退？">
+              <svg class="example-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>
+              你们的退货政策是什么？
+            </button>
+            <button class="example-btn" data-q="物流单号 TRACK-1001-US 现在到哪了？">
+              <svg class="example-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>
+              物流单号 TRACK-1001-US 到哪了？
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="input-area">
+        <div class="input-wrapper">
+          <textarea class="input-box" id="input-box" placeholder="输入你的问题，按 Enter 发送，Shift+Enter 换行..." rows="1"></textarea>
+          <button class="send-btn" id="send-btn" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            <span class="send-btn-text">发送</span>
+          </button>
+        </div>
+        <div class="input-hint">AI 客服会调用后台工具查询实时数据，回答基于订单系统和知识库。</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+/* ============================================================
+   State
+   ============================================================ */
+const state = {
+  // IMPORTANT: default must match settings.default_tenant_id ("demo-tenant").
+  // A mismatch (e.g. frontend 'demo' vs backend 'demo-tenant') means the
+  // lifespan warmup builds the agent for 'demo-tenant', but the first
+  // request from a fresh browser sends 'demo' and triggers a 30+ second
+  // cold build (BGE embedding ~95MB load) — the browser SSE then aborts
+  // before the first byte arrives. See AGENT-WORKFLOW.md pitfall #17.
+  tenantId: localStorage.getItem('0719_tenant_id') || 'demo-tenant',
+  currentThreadId: null,
+  conversations: [],          // [{thread_id, last_active, preview, turns}]
+  isStreaming: false,
+  abortController: null,
+  pendingStepEls: new Map(),  // step_id -> DOM element
+  lastMsg: null,              // {role, ts, el} 用于消息分组与时间分隔
+};
+
+/* ============================================================
+   Utilities
+   ============================================================ */
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+// Single source of truth for AI avatar fallback. Replaces 3+ duplicated
+// inline onerror handlers that set CSS-variable string on element.style
+// (which browsers ignore) and thus produced an empty avatar box.
+// Use class-based fallback so the visual style lives in CSS where
+// var(--color-primary) is actually resolved.
+window.handleAvatarError = function(img) {
+  img.style.display = 'none';
+  const parent = img.parentElement;
+  if (parent) {
+    parent.classList.add('avatar-fallback');
+    parent.textContent = 'A';
+  }
+};
+
+function renderMarkdown(text) {
+  if (!text) return '<span style="color: var(--color-text-muted); font-style: italic;">（无内容）</span>';
+  try {
+    if (window.marked) { marked.setOptions({ breaks: true, gfm: true }); }
+    // Security: ALWAYS escape when DOMPurify is missing. Returning raw
+    // (even marked output) would let trace content / LLM output execute
+    // as HTML (XSS).
+    const raw = window.marked ? marked.parse(text) : escapeHtml(text).replace(/\n/g, '<br>');
+    return window.DOMPurify ? DOMPurify.sanitize(raw) : escapeHtml(text).replace(/\n/g, '<br>');
+  } catch (e) {
+    return escapeHtml(text).replace(/\n/g, '<br>');
+  }
+}
+
+function toast(message, type = 'info', duration = 3000) {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = 'opacity 200ms';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 200);
+  }, duration);
+}
+
+function api(path, options = {}) {
+  const headers = options.headers || {};
+  if (!headers['X-Tenant-Id']) headers['X-Tenant-Id'] = state.tenantId;
+  if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(options.body);
+  }
+  options.headers = headers;
+  return fetch(path, options);
+}
+
+function formatTime(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return iso; }
+}
+
+/* ============================================================
+   Conversation list
+   ============================================================ */
+async function loadConversations() {
+  try {
+    const resp = await api('/api/traces?limit=100');
+    const data = await resp.json();
+    const traces = data.traces || [];
+    // group by thread_id
+    const groups = new Map();
+    for (const t of traces) {
+      const tid = t.thread_id || '(unknown)';
+      if (!groups.has(tid)) groups.set(tid, []);
+      groups.get(tid).push(t);
+    }
+    state.conversations = Array.from(groups.entries()).map(([thread_id, items]) => {
+      items.sort((a, b) => (a.started_at || '').localeCompare(b.started_at || ''));
+      const last = items[items.length - 1];
+      return {
+        thread_id,
+        last_active: last?.started_at || last?.finished_at || '',
+        preview: (last?.user_input || '').slice(0, 60),
+        preview_answer: (last?.final_answer || '').slice(0, 60),
+        turns: items.length,
+      };
+    }).sort((a, b) => (b.last_active || '').localeCompare(a.last_active || ''));
+    renderConversationList();
+  } catch (e) {
+    console.error('loadConversations failed:', e);
+  }
+}
+
+function renderConversationList() {
+  const list = document.getElementById('conversation-list');
+  if (state.conversations.length === 0) {
+    list.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--color-text-muted); font-size: 12px;">暂无历史会话</div>';
+    return;
+  }
+  list.innerHTML = state.conversations.map(c => `
+    <div class="conversation-item ${c.thread_id === state.currentThreadId ? 'active' : ''}" data-thread="${escapeHtml(c.thread_id)}">
+      <div class="conv-title">${escapeHtml(c.preview || c.thread_id)}</div>
+      ${c.preview_answer ? `<div class="conv-preview">${escapeHtml(c.preview_answer)}</div>` : ''}
+      <div class="conv-meta">${c.turns} 轮 · ${formatTime(c.last_active)}</div>
+    </div>
+  `).join('');
+  list.querySelectorAll('.conversation-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const tid = el.dataset.thread;
+      if (tid && tid !== state.currentThreadId) {
+        switchToConversation(tid);
+      }
+    });
+  });
+}
+
+async function switchToConversation(threadId) {
+  if (state.isStreaming) {
+    toast('请等待当前回复完成', 'warning');
+    return;
+  }
+  state.currentThreadId = threadId;
+  document.getElementById('thread-display').textContent = `thread: ${threadId}`;
+  renderConversationList();
+  await loadConversationHistory(threadId);
+}
+
+async function loadConversationHistory(threadId) {
+  const messages = document.getElementById('messages');
+  messages.innerHTML = '';
+  resetMessageGrouping();
+  try {
+    const resp = await api(`/api/chat/conversations/${encodeURIComponent(threadId)}/history`);
+    const data = await resp.json();
+    const traces = data.traces || [];
+    if (traces.length === 0) {
+      showEmptyState();
+      return;
+    }
+    hideEmptyState();
+    for (const t of traces) {
+      appendMessage('user', t.user_input || '');
+      const totalLatency = t.total_latency_ms || 0;
+      // Map trace step types to the streaming step_type taxonomy.
+      // Trace writes 'llm_call' / 'tool_call' (see tracing.py). Defensive
+      // fallback: anything not starting with 'llm' is treated as tool_call
+      // ONLY if it has a tool name; otherwise it's an llm_call.
+      const steps = (t.steps || []).map(s => {
+        const type = s.type || '';
+        const isLlm = type.startsWith('llm') || (type !== 'tool_call' && !s.name);
+        return {
+          step_type: isLlm ? 'llm_call' : 'tool_call',
+          friendly_message: type === 'tool_call'
+            ? `已调用工具 ${s.name || ''}`
+            : (s.friendly_message || 'LLM 推理'),
+          tool_name: s.name,
+          tool_args: s.args || {},
+          preview: s.result || s.result_preview || '',
+          latency_ms: s.latency_ms || 0,
+          done: true,
+        };
+      });
+      appendMessage('ai', t.final_answer || '', {
+        trace_id: t.trace_id,
+        steps,
+        totalLatencyMs: totalLatency,
+        num_tools: steps.filter(s => s.step_type === 'tool_call').length,
+        num_llm: steps.filter(s => s.step_type === 'llm_call').length,
+        history: true,
+      });
+    }
+  } catch (e) {
+    console.error('loadConversationHistory failed:', e);
+    toast('加载历史会话失败', 'error');
+  }
+}
+
+function getEmptyStateHTML() {
+  return `
+    <div class="empty-chat" id="empty-chat" style="display: flex;">
+      <div class="empty-avatar">
+        <img src="/avatars/ai_avatar.jpg" alt="AI 客服头像" onerror="handleAvatarError(this)">
+      </div>
+      <div class="empty-title">你好，我是你的专属客服</div>
+      <div class="empty-sub">可以问我订单状态、退款进度、物流轨迹、退货政策等。我会调用后台工具为你查询最新信息。</div>
+      <div class="example-grid">
+        <button class="example-btn" data-q="查询订单 1001 的状态">
+          <svg class="example-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+          查询订单 1001 的状态
+        </button>
+        <button class="example-btn" data-q="订单 1001 怎么申请退款？">
+          <svg class="example-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+          订单 1001 怎么申请退款？
+        </button>
+        <button class="example-btn" data-q="你们的退货政策是什么？多少天内可以退？">
+          <svg class="example-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>
+          你们的退货政策是什么？
+        </button>
+        <button class="example-btn" data-q="物流单号 TRACK-1001-US 现在到哪了？">
+          <svg class="example-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>
+          物流单号 TRACK-1001-US 到哪了？
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function showEmptyState() {
+  let el = document.getElementById('empty-chat');
+  if (!el) {
+    // Element was removed by messages.innerHTML='' — recreate it.
+    const messages = document.getElementById('messages');
+    if (messages) {
+      messages.innerHTML = getEmptyStateHTML();
+      bindExampleButtons();
+    }
+    return;
+  }
+  el.style.display = 'flex';
+}
+function hideEmptyState() {
+  const el = document.getElementById('empty-chat');
+  if (el) el.style.display = 'none';
+}
+
+/* ============================================================
+   Message rendering
+   ============================================================ */
+function appendMessage(role, content, meta = {}) {
+  hideEmptyState();
+  const messages = document.getElementById('messages');
+  const now = Date.now();
+
+  // 时间分隔线：与上一条消息间隔 > 5 分钟
+  if (state.lastMsg && (now - state.lastMsg.ts) > 5 * 60 * 1000) {
+    const divider = document.createElement('div');
+    divider.className = 'msg-time-divider';
+    const t = new Date(now).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    divider.innerHTML = `<span>${t}</span>`;
+    messages.appendChild(divider);
+    state.lastMsg = null; // 分隔后强制新建消息分组
+  }
+
+  // 消息分组：同角色且时间 < 60s 且非流式 → 复用上一条 message 的 content
+  const canGroup = state.lastMsg
+    && state.lastMsg.role === role
+    && (now - state.lastMsg.ts) < 60 * 1000
+    && !meta.streaming;
+
+  let msg, contentWrap;
+  if (canGroup) {
+    msg = state.lastMsg.el;
+    contentWrap = msg.querySelector('.msg-content');
+  } else {
+    msg = document.createElement('div');
+    msg.className = `message message-${role}`;
+
+    // Avatar
+    const avatar = document.createElement('div');
+    avatar.className = `msg-avatar ${role === 'user' ? 'user-avatar' : ''}`;
+    if (role === 'user') {
+      avatar.textContent = '我';
+    } else {
+      const img = document.createElement('img');
+      img.src = '/avatars/ai_avatar.jpg';
+      img.alt = 'AI';
+      img.onerror = function() { window.handleAvatarError(this); };
+      avatar.appendChild(img);
+    }
+    msg.appendChild(avatar);
+
+    // Content
+    contentWrap = document.createElement('div');
+    contentWrap.className = 'msg-content';
+
+    const name = document.createElement('div');
+    name.className = 'msg-name';
+    name.textContent = role === 'user' ? '我' : '智能客服';
+    contentWrap.appendChild(name);
+    msg.appendChild(contentWrap);
+    messages.appendChild(msg);
+  }
+
+  if (role === 'user') {
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble user';
+    bubble.textContent = content;
+    contentWrap.appendChild(bubble);
+  } else {
+    // AI message: thinking card + bubble + summary + actions
+    if (meta.steps && meta.steps.length > 0) {
+      const thinking = buildThinkingCard(meta.steps, meta.totalLatencyMs, meta.history);
+      contentWrap.appendChild(thinking);
+    } else if (meta.streaming) {
+      // placeholder for streaming, will be filled in
+    }
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble ai markdown';
+    if (meta.streaming) {
+      // typing indicator：三点动画
+      bubble.innerHTML = '<div class="typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+    } else {
+      bubble.innerHTML = renderMarkdown(content);
+      enhanceCodeBlocks(bubble);
+    }
+    contentWrap.appendChild(bubble);
+
+    // Summary card
+    if (meta.totalLatencyMs != null && !meta.streaming) {
+      const summary = buildSummaryCard(meta);
+      contentWrap.appendChild(summary);
+    }
+
+    // Reactions：👍 👎 📋（复制），固定显示在消息下方右侧
+    if (!meta.streaming && meta.trace_id) {
+      const actions = document.createElement('div');
+      actions.className = 'msg-actions';
+      actions.innerHTML = `
+        <button class="msg-action-btn reaction" data-action="up" data-trace="${escapeHtml(meta.trace_id)}" title="有帮助">
+          👍
+        </button>
+        <button class="msg-action-btn reaction" data-action="down" data-trace="${escapeHtml(meta.trace_id)}" title="需改进">
+          👎
+        </button>
+        <button class="msg-action-btn reaction" data-action="copy" data-trace="${escapeHtml(meta.trace_id)}" title="复制回复">
+          📋
+        </button>
+      `;
+      actions.querySelectorAll('.msg-action-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (btn.dataset.action === 'copy') handleCopyAction(btn);
+          else handleFeedback(btn);
+        });
+      });
+      contentWrap.appendChild(actions);
+    }
+  }
+
+  state.lastMsg = { role, ts: now, el: msg };
+  scrollToBottom();
+  return msg;
+}
+
+// 给 markdown 容器内的每个 <pre> 加复制按钮
+function enhanceCodeBlocks(container) {
+  if (!container) return;
+  const pres = container.querySelectorAll('pre');
+  pres.forEach(pre => {
+    if (pre.querySelector('.code-copy-btn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'code-copy-btn';
+    btn.textContent = '复制';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const code = pre.querySelector('code');
+      const text = code ? code.textContent : pre.textContent;
+      copyToClipboard(text).then(() => {
+        btn.textContent = '已复制';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+}
+
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  } catch (e) {
+    console.warn('copy failed:', e);
+  }
+}
+
+// 复制 AI 回复纯文本到剪贴板
+function handleCopyAction(btn) {
+  const aiMessage = btn.closest('.message');
+  const aiBubble = aiMessage ? aiMessage.querySelector('.msg-bubble.ai') : null;
+  const text = aiBubble ? aiBubble.textContent.trim() : '';
+  if (!text) { toast('无内容可复制', 'warning'); return; }
+  copyToClipboard(text).then(() => toast('已复制回复内容', 'success', 1500));
+}
+
+// 重置消息分组上下文（在 newChat / loadConversationHistory 中调用）
+function resetMessageGrouping() {
+  state.lastMsg = null;
+}
+
+function buildThinkingCard(steps, totalLatencyMs, collapsed = false) {
+  const card = document.createElement('div');
+  card.className = 'thinking-card' + (collapsed ? ' collapsed' : '');
+
+  const header = document.createElement('div');
+  header.className = 'thinking-card-header';
+  const numTools = steps.filter(s => s.step_type === 'tool_call').length;
+  const numLlm = steps.filter(s => s.step_type === 'llm_call').length;
+  const numThink = steps.filter(s => s.step_type === 'agent_think').length;
+  header.innerHTML = `
+    <div class="header-left">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      <span>推理过程</span>
+    </div>
+    <div class="header-right">${steps.length} 步 · ${numTools} 工具 · ${numLlm + numThink} 推理</div>
+  `;
+  header.addEventListener('click', () => card.classList.toggle('collapsed'));
+  card.appendChild(header);
+
+  const stepsEl = document.createElement('div');
+  stepsEl.className = 'thinking-steps';
+  for (const s of steps) {
+    stepsEl.appendChild(buildThinkingStep(s));
+  }
+  card.appendChild(stepsEl);
+  return card;
+}
+
+// Kiki-style per-step row: small magnifier icon, single line of
+// friendly Chinese, no TOOL/LLM/THINK tag. The step-icon shows a
+// magnifier while pending and a green check once done.
+const MAGNIFIER_SVG = '<svg class="magnifier" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.65" y2="16.65"></line></svg>';
+const CHECK_SVG = '<svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+const SPINNER_SVG = '<div class="spinner"></div>';
+
+function buildThinkingStep(step) {
+  const el = document.createElement('div');
+  el.className = 'thinking-step' + (step.done ? ' done' : '');
+  // Kiki uses a magnifier icon for both pending and done states (just
+  // with a tick on done). We use a spinner only when there's NO message
+  // text yet (true first-load state) — once a message appears, switch
+  // to magnifier to match the reference design.
+  const hasText = !!(step.friendly_message && step.friendly_message.length);
+  let iconHtml;
+  if (step.done) {
+    iconHtml = CHECK_SVG;
+  } else if (hasText) {
+    iconHtml = MAGNIFIER_SVG;
+  } else {
+    iconHtml = SPINNER_SVG;
+  }
+  const messageClass = 'step-message' + (step.done ? '' : ' pending');
+  el.innerHTML = `
+    <div class="step-icon">${iconHtml}</div>
+    <div class="step-body">
+      <span class="${messageClass}">${escapeHtml(step.friendly_message || '处理中...')}</span>
+      ${step.latency_ms != null && step.done ? `<div class="step-meta">${step.latency_ms.toFixed(0)} ms</div>` : ''}
+      ${step.tool_args && Object.keys(step.tool_args).length > 0 ? `<div class="step-toggle">查看参数</div><div class="step-detail" style="display:none;">${escapeHtml(JSON.stringify(step.tool_args, null, 2))}</div>` : ''}
+      ${step.preview ? `<div class="step-toggle">查看结果</div><div class="step-detail" style="display:none;">${escapeHtml(step.preview)}</div>` : ''}
+    </div>
+  `;
+  // Toggle detail visibility
+  el.querySelectorAll('.step-toggle').forEach(t => {
+    t.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const detail = t.nextElementSibling;
+      if (detail) {
+        const hidden = detail.style.display === 'none';
+        detail.style.display = hidden ? 'block' : 'none';
+        t.textContent = hidden ? (t.textContent.includes('参数') ? '收起参数' : '收起结果') : (t.textContent.includes('参数') ? '查看参数' : '查看结果');
+      }
+    });
+  });
+  return el;
+}
+
+// Kiki-style: remove [ACTION]…[/ACTION] blocks from the agent's raw
+// text so the visible bubble doesn't echo the JSON payload.
+function stripActionBlocks(text) {
+  if (!text) return '';
+  return text.replace(/\[ACTION\][\s\S]*?\[\/ACTION\]/g, '').trim();
+}
+
+// Kiki-style action card: a small block of one or more pill-shaped
+// buttons below the bubble. Clicking a button submits its `prompt` as
+// the next user turn, so the agent can continue the workflow.
+function buildActionCard(cards, contentWrap) {
+  const wrap = document.createElement('div');
+  wrap.className = 'action-card';
+  const hint = document.createElement('div');
+  hint.className = 'action-card-hint';
+  hint.textContent = '需要我自动执行吗？点击下方按钮继续。';
+  wrap.appendChild(hint);
+  const buttons = document.createElement('div');
+  buttons.className = 'action-card-buttons';
+  for (const card of cards) {
+    const btn = document.createElement('button');
+    btn.className = 'action-card-btn';
+    btn.dataset.actionId = card.id;
+    btn.dataset.actionPrompt = card.prompt;
+    btn.innerHTML = `
+      <span class="sparkle">✦</span>
+      <span class="label">${escapeHtml(card.label)}</span>
+    `;
+    btn.addEventListener('click', () => {
+      // Visual click feedback (turn green + disable siblings).
+      btn.classList.add('clicked');
+      btn.disabled = true;
+      buttons.querySelectorAll('.action-card-btn').forEach(b => {
+        if (b !== btn) b.disabled = true;
+      });
+      // Submit the action's prompt as the next user turn.
+      const promptText = card.prompt;
+      const inputBox = document.getElementById('input-box');
+      if (inputBox) {
+        inputBox.value = promptText;
+      }
+      sendMessage(promptText);
+    });
+    buttons.appendChild(btn);
+  }
+  wrap.appendChild(buttons);
+  return wrap;
+}
+
+function buildSummaryCard(meta) {
+  const card = document.createElement('div');
+  card.className = 'summary-card';
+  const parts = [];
+  if (meta.num_tools != null) parts.push(`<span class="summary-item">工具调用 <strong>${meta.num_tools}</strong></span>`);
+  if (meta.num_llm != null) parts.push(`<span class="summary-item">LLM 推理 <strong>${meta.num_llm}</strong></span>`);
+  if (meta.totalLatencyMs != null) parts.push(`<span class="summary-item">耗时 <strong>${(meta.totalLatencyMs / 1000).toFixed(1)}s</strong></span>`);
+  if (meta.trace_id) parts.push(`<span class="summary-item">trace: ${escapeHtml(meta.trace_id.slice(0, 8))}</span>`);
+  card.innerHTML = parts.join('<span class="summary-sep">·</span>');
+  return card;
+}
+
+function scrollToBottom() {
+  const messages = document.getElementById('messages');
+  messages.scrollTop = messages.scrollHeight;
+}
+
+/* ============================================================
+   SSE streaming chat
+   ============================================================ */
+async function sendMessage(text) {
+  if (state.isStreaming || !text.trim()) return;
+
+  // Generate thread_id if not set
+  if (!state.currentThreadId) {
+    state.currentThreadId = `tenant-${state.tenantId}-web-${Date.now()}`;
+    document.getElementById('thread-display').textContent = `thread: ${state.currentThreadId}`;
+  }
+
+  hideEmptyState();
+  state.isStreaming = true;
+  state.pendingStepEls.clear();
+  updateSendButton();
+
+  // Append user message
+  appendMessage('user', text);
+
+  // Append AI message placeholder (streaming)
+  const aiMsg = appendMessage('ai', '', { streaming: true });
+  const contentWrap = aiMsg.querySelector('.msg-content');
+  // Kiki-style: progress list is open by default (no `collapsed` class).
+  // The header still toggles collapse on click for power users.
+  const thinkingCard = document.createElement('div');
+  thinkingCard.className = 'thinking-card';
+  thinkingCard.innerHTML = `
+    <div class="thinking-card-header">
+      <div class="header-left">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        <span>推理过程</span>
+      </div>
+      <div class="header-right" id="thinking-summary">处理中...</div>
+    </div>
+    <div class="thinking-steps" id="thinking-steps"></div>
+  `;
+  thinkingCard.querySelector('.thinking-card-header').addEventListener('click', () => thinkingCard.classList.toggle('collapsed'));
+  // Insert thinking card before the bubble
+  const bubble = contentWrap.querySelector('.msg-bubble');
+  contentWrap.insertBefore(thinkingCard, bubble);
+
+  const stepsContainer = thinkingCard.querySelector('#thinking-steps');
+  const summaryEl = thinkingCard.querySelector('#thinking-summary');
+
+  let finalAnswer = '';
+  let traceId = null;
+  let numSteps = 0;
+  let numTools = 0;
+  let numLlm = 0;
+  let totalLatencyMs = 0;
+  let errorMsg = null;
+  let routeInfo = null;
+  // Kiki-style action cards collected from the agent's [ACTION] blocks.
+  // Rendered below the bubble once streaming ends. Clicking a button
+  // submits the action's `prompt` as the next user turn.
+  let actionCards = [];
+
+  try {
+    state.abortController = new AbortController();
+    const resp = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': state.tenantId },
+      body: JSON.stringify({
+        message: text,
+        thread_id: state.currentThreadId,
+        tenant_id: state.tenantId,
+      }),
+      signal: state.abortController.signal,
+    });
+
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // Normalize CRLF -> LF (sse-starlette emits CRLF)
+      buffer = buffer.replace(/\r\n/g, '\n');
+      // Split by blank line (LF LF)
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();  // last incomplete part
+      for (const part of parts) {
+        if (!part.trim()) continue;
+        const evt = parseSSEEvent(part);
+        if (!evt) continue;
+        const result = handleSSEEvent(evt, {
+          stepsContainer,
+          summaryEl,
+          bubble,
+          contentWrap,
+        });
+        if (result.finalAnswer !== undefined) finalAnswer = result.finalAnswer;
+        if (result.traceId) traceId = result.traceId;
+        if (result.numSteps != null) numSteps = result.numSteps;
+        if (result.numTools != null) numTools = result.numTools;
+        if (result.numLlm != null) numLlm = result.numLlm;
+        if (result.totalLatencyMs != null) totalLatencyMs = result.totalLatencyMs;
+        if (result.errorMsg) errorMsg = result.errorMsg;
+        if (result.routeInfo) routeInfo = result.routeInfo;
+        if (result.actionCards) actionCards = actionCards.concat(result.actionCards);
+      }
+    }
+    // Process any trailing event in buffer
+    if (buffer.trim()) {
+      const evt = parseSSEEvent(buffer);
+      if (evt) {
+        const result = handleSSEEvent(evt, { stepsContainer, summaryEl, bubble, contentWrap });
+        if (result.finalAnswer !== undefined) finalAnswer = result.finalAnswer;
+        if (result.traceId) traceId = result.traceId;
+        if (result.numSteps != null) numSteps = result.numSteps;
+        if (result.numTools != null) numTools = result.numTools;
+        if (result.numLlm != null) numLlm = result.numLlm;
+        if (result.totalLatencyMs != null) totalLatencyMs = result.totalLatencyMs;
+        if (result.errorMsg) errorMsg = result.errorMsg;
+        if (result.routeInfo) routeInfo = result.routeInfo;
+        if (result.actionCards) actionCards = actionCards.concat(result.actionCards);
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      errorMsg = '已取消';
+    } else {
+      console.error('SSE failed:', e);
+      errorMsg = e.message;
+    }
+  } finally {
+    state.isStreaming = false;
+    state.abortController = null;
+    updateSendButton();
+  }
+
+  // Finalize bubble
+  if (errorMsg && !finalAnswer) {
+    bubble.innerHTML = `<span style="color: var(--color-danger);">回复失败：${escapeHtml(errorMsg)}</span>`;
+  } else if (finalAnswer) {
+    // Strip any [ACTION]…[/ACTION] blocks from the rendered text — the
+    // action cards are rendered as separate buttons below. We keep the
+    // raw text in `finalAnswer` for the copy button.
+    const visibleText = stripActionBlocks(finalAnswer);
+    bubble.innerHTML = renderMarkdown(visibleText);
+    bubble.classList.add('markdown');
+    enhanceCodeBlocks(bubble);
+  } else {
+    bubble.innerHTML = '<span style="color: var(--color-text-muted);">（无回复内容）</span>';
+  }
+
+  // Finalize summary
+  summaryEl.textContent = `${numSteps} 步 · ${numTools} 工具 · ${numLlm} 推理 · ${(totalLatencyMs / 1000).toFixed(1)}s`;
+
+  // Kiki-style action card (rendered after the bubble, before the
+  // summary + feedback row). Only show if we actually have cards.
+  if (actionCards.length > 0) {
+    const ac = buildActionCard(actionCards, contentWrap);
+    contentWrap.appendChild(ac);
+  }
+
+  // Add summary card + feedback buttons
+  if (finalAnswer && traceId) {
+    const summaryCard = buildSummaryCard({
+      num_tools: numTools,
+      num_llm: numLlm,
+      totalLatencyMs,
+      trace_id: traceId,
+    });
+    contentWrap.appendChild(summaryCard);
+
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    actions.innerHTML = `
+      <button class="msg-action-btn reaction" data-action="up" data-trace="${escapeHtml(traceId)}" title="有帮助">👍</button>
+      <button class="msg-action-btn reaction" data-action="down" data-trace="${escapeHtml(traceId)}" title="需改进">👎</button>
+      <button class="msg-action-btn reaction" data-action="copy" data-trace="${escapeHtml(traceId)}" title="复制回复">📋</button>
+    `;
+    actions.querySelectorAll('.msg-action-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.dataset.action === 'copy') handleCopyAction(btn);
+        else handleFeedback(btn);
+      });
+    });
+    contentWrap.appendChild(actions);
+  }
+
+  // Refresh conversation list
+  loadConversations();
+}
+
+function parseSSEEvent(raw) {
+  // raw is a block of "key: value\nkey: value" lines
+  let event = 'message';
+  let data = '';
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const val = line.slice(colonIdx + 1).trim();
+    if (key === 'event') event = val;
+    else if (key === 'data') data += (data ? '\n' : '') + val;
+  }
+  if (!data) return null;
+  try {
+    return { event, data: JSON.parse(data) };
+  } catch (e) {
+    console.warn('parseSSEEvent JSON parse failed:', e, data);
+    return null;
+  }
+}
+
+function handleSSEEvent(evt, ctx) {
+  const result = {
+    finalAnswer: undefined,
+    traceId: null,
+    numSteps: null,
+    numTools: null,
+    numLlm: null,
+    totalLatencyMs: null,
+    errorMsg: null,
+    routeInfo: null,
+    actionCards: undefined,  // Kiki-style: action buttons collected per event
+  };
+  const { stepsContainer, summaryEl, bubble, contentWrap } = ctx;
+
+  switch (evt.event) {
+    case 'meta':
+      // ignore, thread_id already set
+      break;
+    case 'route': {
+      const data = evt.data;
+      result.routeInfo = data;
+      const banner = document.createElement('div');
+      banner.className = 'route-banner';
+      const routeText = {
+        order_ops: '订单专员',
+        knowledge: '知识库专员',
+        escalation: '人工客服',
+      }[data.route] || data.subagent_name || '专员';
+      banner.innerHTML = `
+        <div class="route-icon">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 11l-5-5-5 5"></path><path d="M17 18l-5-5-5 5"></path></svg>
+        </div>
+        <span>已转交 <strong>${escapeHtml(routeText)}</strong> 处理${data.route_reason ? ' · ' + escapeHtml(data.route_reason) : ''}</span>
+      `;
+      // Insert banner at top of steps container (before steps)
+      stepsContainer.parentElement.insertBefore(banner, stepsContainer);
+      break;
+    }
+    case 'step_start': {
+      const data = evt.data;
+      const step = {
+        step_id: data.step_id,
+        step_type: data.step_type,
+        friendly_message: data.friendly_message,
+        tool_name: data.tool_name,
+        tool_args: data.tool_args,
+        done: false,
+      };
+      const stepEl = buildThinkingStep(step);
+      stepsContainer.appendChild(stepEl);
+      state.pendingStepEls.set(data.step_id, stepEl);
+      updateThinkingSummary(summaryEl);
+      break;
+    }
+    case 'step_end': {
+      const data = evt.data;
+      const stepEl = state.pendingStepEls.get(data.step_id);
+      if (stepEl) {
+        stepEl.classList.add('done');
+        // Replace spinner with check
+        const iconEl = stepEl.querySelector('.step-icon');
+        if (iconEl) {
+          iconEl.innerHTML = '<svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        }
+        // Add latency + preview
+        const body = stepEl.querySelector('.step-body');
+        if (body) {
+          if (data.latency_ms != null) {
+            const meta = document.createElement('div');
+            meta.className = 'step-meta';
+            meta.textContent = `${data.latency_ms.toFixed(0)} ms`;
+            body.appendChild(meta);
+          }
+          if (data.preview) {
+            const toggle = document.createElement('div');
+            toggle.className = 'step-toggle';
+            toggle.textContent = '查看结果';
+            const detail = document.createElement('div');
+            detail.className = 'step-detail';
+            detail.style.display = 'none';
+            detail.textContent = data.preview;
+            toggle.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const hidden = detail.style.display === 'none';
+              detail.style.display = hidden ? 'block' : 'none';
+              toggle.textContent = hidden ? '收起结果' : '查看结果';
+            });
+            body.appendChild(toggle);
+            body.appendChild(detail);
+          }
+        }
+        state.pendingStepEls.delete(data.step_id);
+      }
+      updateThinkingSummary(summaryEl);
+      break;
+    }
+    case 'final': {
+      const data = evt.data;
+      result.finalAnswer = data.answer || '';
+      result.traceId = data.trace_id;
+      result.numSteps = data.num_steps;
+      // Backend can attach action_cards to the final event so the front
+      // end renders Kiki-style "帮我操作" buttons after streaming.
+      if (Array.isArray(data.action_cards) && data.action_cards.length) {
+        result.actionCards = data.action_cards;
+      }
+      if (data.ok === false) result.errorMsg = 'agent 返回失败';
+      break;
+    }
+    case 'interim_answer': {
+      // Kiki multi-turn: a mid-conversation AI bubble rendered between
+      // the thinking card and the final answer. The agent emits this
+      // when it outputs visible text alongside a tool_call (e.g. "我
+      // 找到了活动页，下面帮你看看有哪些可以领取"). Multiple interim
+      // answers can appear in a single turn (2-step, 3-step, ...).
+      const data = evt.data;
+      const interim = document.createElement('div');
+      interim.className = 'msg-bubble ai interim-answer markdown';
+      interim.innerHTML = renderMarkdown(data.answer || '');
+      // Insert before the final bubble (after the thinking card).
+      ctx.bubble.parentElement.insertBefore(interim, ctx.bubble);
+      break;
+    }
+    case 'action_card': {
+      // Streaming variant: emitted separately from `final` so the
+      // button can appear the instant the LLM finishes the [ACTION]
+      // block, without waiting for the SSE stream to drain.
+      const data = evt.data;
+      if (data && data.id && data.label && data.prompt) {
+        if (!result.actionCards) result.actionCards = [];
+        result.actionCards.push({
+          id: data.id,
+          label: data.label,
+          prompt: data.prompt,
+        });
+      }
+      break;
+    }
+    case 'summary': {
+      const data = evt.data;
+      result.numTools = data.num_tools_called;
+      result.numLlm = data.num_llm_calls;
+      result.totalLatencyMs = data.total_latency_ms;
+      break;
+    }
+    case 'error': {
+      result.errorMsg = evt.data.message || '未知错误';
+      result.traceId = evt.data.trace_id;
+      break;
+    }
+  }
+  return result;
+}
+
+function updateThinkingSummary(summaryEl) {
+  // Scope step counting to THIS thinking card (multiple cards may co-exist
+  // in the DOM during history replay). Use summaryEl.closest() instead of
+  // a global #thinking-steps selector that returns steps from ALL cards.
+  const card = summaryEl ? summaryEl.closest('.thinking-card') : null;
+  if (!card) return;
+  const steps = card.querySelectorAll('.thinking-steps .thinking-step');
+  const total = steps.length;
+  const done = card.querySelectorAll('.thinking-steps .thinking-step.done').length;
+  if (summaryEl) {
+    summaryEl.textContent = total === 0
+      ? '处理中...'
+      : (done >= total ? `已完成 ${done} 步` : `处理中... ${done}/${total} 步完成`);
+  }
+}
+
+function updateSendButton() {
+  const btn = document.getElementById('send-btn');
+  const box = document.getElementById('input-box');
+  if (state.isStreaming) {
+    btn.disabled = true;
+    box.disabled = true;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> <span class="send-btn-text">处理中</span>';
+  } else {
+    btn.disabled = !box.value.trim();
+    box.disabled = false;
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> <span class="send-btn-text">发送</span>';
+  }
+}
+
+/* ============================================================
+   Feedback
+   ============================================================ */
+async function handleFeedback(btn) {
+  const action = btn.dataset.action;
+  const traceId = btn.dataset.trace;
+  const passed = action === 'up';
+  if (btn.classList.contains('active')) return;
+
+  // Extract user_input and prediction from the surrounding message DOM so
+  // the data flywheel has usable training data. Previously these were
+  // hardcoded as '' which made every bad-case record useless without a
+  // trace_id join back to the trace file.
+  const aiMessage = btn.closest('.message');
+  const userMessage = aiMessage ? aiMessage.previousElementSibling : null;
+  const userBubble = userMessage ? userMessage.querySelector('.msg-bubble.user') : null;
+  const aiBubble = aiMessage ? aiMessage.querySelector('.msg-bubble.ai') : null;
+  const user_input = userBubble ? userBubble.textContent.trim() : '';
+  const prediction = aiBubble ? aiBubble.textContent.trim() : '';
+
+  try {
+    const resp = await api('/api/feedback', {
+      method: 'POST',
+      body: {
+        user_input, prediction, passed,
+        trace_id: traceId,
+        thread_id: state.currentThreadId,
+        tenant_id: state.tenantId,
+      },
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      btn.classList.add('active', action);
+      // Disable sibling
+      const sibling = btn.parentElement.querySelector(`.msg-action-btn[data-action="${action === 'up' ? 'down' : 'up'}"]`);
+      if (sibling) sibling.style.opacity = '0.4';
+      toast(passed ? '感谢反馈，已记录为好评' : '感谢反馈，已记录为差评，将用于改进', passed ? 'success' : 'warning');
+    } else {
+      toast('反馈失败', 'error');
+    }
+  } catch (e) {
+    console.error('feedback failed:', e);
+    toast('反馈提交失败', 'error');
+  }
+}
+
+/* ============================================================
+   Health check
+   ============================================================ */
+async function checkHealth() {
+  try {
+    const resp = await api('/api/health');
+    const data = await resp.json();
+    const indicator = document.getElementById('health-indicator');
+    const text = document.getElementById('health-text');
+    indicator.classList.remove('degraded', 'down');
+    if (data.status === 'ok') {
+      text.textContent = '服务正常';
+    } else {
+      indicator.classList.add('degraded');
+      text.textContent = '服务降级';
+    }
+    // 当前模型 chip：从 /api/health 返回读取，无则隐藏
+    const modelEl = document.getElementById('model-chip');
+    if (modelEl) {
+      const m = data.model || data.llm_model || data.default_model;
+      if (m) { modelEl.textContent = m; modelEl.hidden = false; }
+      else { modelEl.hidden = true; }
+    }
+  } catch (e) {
+    const indicator = document.getElementById('health-indicator');
+    const text = document.getElementById('health-text');
+    indicator.classList.remove('degraded');
+    indicator.classList.add('down');
+    text.textContent = '服务不可用';
+  }
+}
+
+/* ============================================================
+   New chat
+   ============================================================ */
+function newChat() {
+  if (state.isStreaming) {
+    toast('请等待当前回复完成', 'warning');
+    return;
+  }
+  state.currentThreadId = null;
+  document.getElementById('thread-display').textContent = 'thread: (新会话)';
+  resetMessageGrouping();
+  renderConversationList();
+  const messages = document.getElementById('messages');
+  // Reuse getEmptyStateHTML() instead of duplicating the markup a third time.
+  messages.innerHTML = getEmptyStateHTML();
+  bindExampleButtons();
+}
+
+function bindExampleButtons() {
+  document.querySelectorAll('.example-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = btn.dataset.q;
+      const box = document.getElementById('input-box');
+      box.value = q;
+      updateSendButton();
+      box.focus();
+    });
+  });
+}
+
+/* ============================================================
+   Init
+   ============================================================ */
+function init() {
+  // Tenant display
+  document.getElementById('tenant-display').textContent = state.tenantId;
+
+  // New chat
+  document.getElementById('new-chat-btn').addEventListener('click', newChat);
+
+  // Input
+  const box = document.getElementById('input-box');
+  const btn = document.getElementById('send-btn');
+  box.addEventListener('input', () => {
+    // auto-resize
+    box.style.height = 'auto';
+    box.style.height = Math.min(box.scrollHeight, 140) + 'px';
+    updateSendButton();
+  });
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!btn.disabled) {
+        const text = box.value.trim();
+        if (text) {
+          box.value = '';
+          box.style.height = 'auto';
+          sendMessage(text);
+        }
+      }
+    }
+  });
+  btn.addEventListener('click', () => {
+    const text = box.value.trim();
+    if (text && !state.isStreaming) {
+      box.value = '';
+      box.style.height = 'auto';
+      sendMessage(text);
+    }
+  });
+
+  bindExampleButtons();
+
+  // Initial load
+  loadConversations();
+  checkHealth();
+  setInterval(checkHealth, 30000);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
