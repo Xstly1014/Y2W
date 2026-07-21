@@ -46,19 +46,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 # Kiki-mode UX tuning: how long the router step stays in the "running"
-# state before flipping to "done" with the sub-agent handoff. This is
-# deliberately > 0 so the user sees "正在判断" appear as its own line
-# before "已转交「XX」" replaces it. Tunable via env if needed.
-_ROUTER_STEP_HOLD_S: float = float(os.getenv("KIKI_ROUTER_HOLD_S", "0.4"))
+# state before flipping to "done" with the sub-agent handoff. Bumped
+# 0.7s -> 0.9s so the "正在判断" beat is unmistakably visible — too
+# short and the user can't read the line before the route event
+# arrives. The user explicitly asked for "把耗时的 LLM 延迟匀到前面
+# 的不耗时操作上", so we make the front-end steps feel like deliberate
+# thinking beats, not a flash.
+_ROUTER_STEP_HOLD_S: float = float(os.getenv("KIKI_ROUTER_HOLD_S", "0.9"))
 
 # Kiki-mode UX tuning: minimum visible duration for ANY step (router,
 # sub-agent think, tool call, etc.) measured from step_start to
-# step_end. If the actual work is faster, we artificially sleep the
-# delta so the user perceives every step as "thinking for a beat" —
-# instead of seeing several steps flash in < 50ms followed by a long
-# blank waiting for one big LLM call. Kiki reference shows each step
-# holding roughly a second. Tunable via env.
-_MIN_STEP_DURATION_S: float = float(os.getenv("KIKI_MIN_STEP_DURATION_S", "1.0"))
+# step_end. Bumped 0.7s -> 0.9s. The user asked for "把耗时的 LLM
+# 延迟匀到前面的不耗时操作上" — distribute the slow LLM's delay
+# onto the front fast steps. We do this by making every step hold
+# for at least 0.9s of "thinking" time, so a 5s LLM call doesn't
+# surprise the user after a series of 50ms holds. Combined with the
+# per-step budget cap below, this means a 5s LLM call no longer
+# surprises the user after a series of 0.05s holds.
+_MIN_STEP_DURATION_S: float = float(os.getenv("KIKI_MIN_STEP_DURATION_S", "0.9"))
+
+# Kiki-mode UX tuning: how long the "visual gap" between consecutive
+# steps is. In pacing v5 the gap is folded INTO the front-loaded
+# hold of the next step_start (computed from `last_step_end_at`),
+# so this constant is no longer used at the event_gen layer. We
+# keep it for now in case any external code reads it; the
+# front-loaded hold naturally produces the same 0.2s beat for fast
+# steps because the step_start sleep floors at _MIN_HOLD_FLOOR_S
+# (0.25s) anyway. See the comment block in event_gen for the full
+# rationale.
+_STEP_TRANSITION_GAP_S: float = float(os.getenv("KIKI_STEP_GAP_S", "0.2"))  # noqa: F841
 
 # Kiki-mode UX tuning: total visible budget for the whole stream.
 # Each step's hold = min(MIN_STEP, remaining_budget / steps_left) so
@@ -69,19 +85,25 @@ _MIN_STEP_DURATION_S: float = float(os.getenv("KIKI_MIN_STEP_DURATION_S", "1.0")
 # is what the user asked for as "把耗时的 LLM 延迟匀到前面的不耗时
 # 操作上" — we don't actually pre-pay, but we make the per-step hold
 # proportional to how much budget is left, so a 5s LLM doesn't
-# surprise the user after several 50ms steps.
+# surprise the user after several 50ms steps. Bumped 8.0s -> 10.0s
+# so the user has room to wait through a slow LLM call without
+# every later step skipping its hold.
 _TARGET_TOTAL_S: float = float(os.getenv("KIKI_TARGET_TOTAL_S", "10.0"))
 
 # Estimated total step count for a typical Kiki pipeline (router +
 # LLM + tool call + LLM + final). Used to compute steps_left in the
 # per-step budget. Slight over-estimate is fine — the budget will
-# simply have leftover slack we don't spend.
-_TYPICAL_STEPS: int = int(os.getenv("KIKI_TYPICAL_STEPS", "6"))
+# simply have leftover slack we don't spend. Lowered 5 -> 4 so the
+# per-step budget is more generous (10.0s / 4 = 2.5s/step cap) and
+# the user can still feel each step's "thinking" beat even when
+# steps_left is high late in the stream.
+_TYPICAL_STEPS: int = int(os.getenv("KIKI_TYPICAL_STEPS", "4"))
 
 # Hard lower bound on per-step hold. Even if the budget calculation
 # would say "hold for 0.05s", we floor at this value so a step
-# doesn't appear and disappear in a single frame.
-_MIN_HOLD_FLOOR_S: float = float(os.getenv("KIKI_MIN_HOLD_FLOOR_S", "0.4"))
+# doesn't appear and disappear in a single frame. Bumped 0.25s ->
+# 0.3s so the smallest visible beat is still clearly perceptible.
+_MIN_HOLD_FLOOR_S: float = float(os.getenv("KIKI_MIN_HOLD_FLOOR_S", "0.3"))
 
 # --------------------------------------------------------------------------- #
 # Dynamic friendly-message generation (Kiki mode)
@@ -427,58 +449,75 @@ def chat_stream(
                         for ev_type, ev_data in _iter_message_events(
                             msg, node_name, ctx, recorder
                         ):
-                            # Kiki-mode pacing v2: each step's hold is
-                            # min(MIN_STEP, remaining_budget / steps_left)
-                            # so a long LLM call doesn't get preceded
-                            # by a bunch of gratuitous holds (which
-                            # would inflate total wall-clock). The
-                            # intuition: when the budget is fresh,
-                            # fast steps hold up to MIN_STEP; once
-                            # we've spent most of the budget (e.g.
-                            # on a slow LLM), later fast steps get
-                            # the floor instead. This is what the
-                            # user asked for as "把耗时的 LLM 延迟
-                            # 匀到前面的不耗时操作上" — we make the
-                            # per-step hold proportional to the
-                            # budget left, so a 5s LLM doesn't
-                            # surprise the user after several 50ms
-                            # steps.
+                            # Kiki-mode pacing v5: "front-loaded" hold.
+                            # The per-step hold used to be applied AFTER
+                            # step_end (sleep 0.7s after a fast step
+                            # before yielding step_end), but that meant
+                            # the slow LLM call that came next still
+                            # produced a visible "5s wait" for the user.
+                            # Now we sleep BEFORE step_start instead,
+                            # using (target_hold - elapsed_since_last_end)
+                            # as the sleep. A slow LLM (5s) has already
+                            # made us wait long enough → sleep 0, step
+                            # snaps in. A fast LLM (50ms) → sleep the
+                            # diff (~0.65s) so the user still sees a
+                            # clear "thinking" beat. This is the user's
+                            # request: "把耗时的 LLM 延迟匀到前面的不
+                            # 耗时操作上".
+                            if ev_type == "step_start":
+                                now = time.time()
+                                ref = (
+                                    ctx.last_step_end_at
+                                    if ctx.last_step_end_at is not None
+                                    else ctx.stream_started_at
+                                )
+                                elapsed_since_ref = now - ref
+                                stream_elapsed = now - ctx.stream_started_at
+                                remaining_budget = max(
+                                    0.0,
+                                    _TARGET_TOTAL_S - stream_elapsed,
+                                )
+                                # If a slow LLM has already eaten
+                                # most of the budget, fall back to the
+                                # floor so we don't keep holding when
+                                # the user is already past the target.
+                                steps_left = max(
+                                    1, _TYPICAL_STEPS - ctx.steps_completed
+                                )
+                                per_step_budget = remaining_budget / steps_left
+                                target_hold = min(
+                                    _MIN_STEP_DURATION_S, per_step_budget
+                                )
+                                target_hold = max(
+                                    _MIN_HOLD_FLOOR_S, target_hold
+                                )
+                                # If the LLM was slow, elapsed already
+                                # exceeds target → sleep 0. If the LLM
+                                # was fast, sleep the gap. This is the
+                                # whole point of pacing v5.
+                                sleep_s = max(0.0, target_hold - elapsed_since_ref)
+                                # Clamp to remaining budget so we don't
+                                # blow past _TARGET_TOTAL_S when there
+                                # are still several step_starts left.
+                                if stream_elapsed + sleep_s > _TARGET_TOTAL_S:
+                                    sleep_s = max(
+                                        0.0, _TARGET_TOTAL_S - stream_elapsed
+                                    )
+                                if sleep_s > 0.01:
+                                    await asyncio.sleep(sleep_s)
                             if ev_type == "step_end":
                                 step_id = ev_data.get("step_id")
                                 if step_id:
                                     started = ctx.start_times.get(step_id)
                                     if started is not None:
-                                        elapsed = time.time() - started
-                                        stream_elapsed = (
-                                            time.time() - ctx.stream_started_at
-                                        )
-                                        remaining_budget = max(
-                                            0.0,
-                                            _TARGET_TOTAL_S - stream_elapsed,
-                                        )
-                                        steps_left = max(
-                                            1, _TYPICAL_STEPS - ctx.steps_completed
-                                        )
-                                        per_step_budget = remaining_budget / steps_left
-                                        # Hold the step for at most the
-                                        # per-step cap; if the budget
-                                        # is already tight, hold the
-                                        # floor instead. Never below
-                                        # the floor (or the step
-                                        # vanishes in a single frame).
-                                        target_hold = min(
-                                            _MIN_STEP_DURATION_S, per_step_budget
-                                        )
-                                        target_hold = max(
-                                            _MIN_HOLD_FLOOR_S, target_hold
-                                        )
-                                        remaining = target_hold - elapsed
-                                        if remaining > 0:
-                                            await asyncio.sleep(remaining)
-                                        # Recompute latency_ms and pop
-                                        # start_times so the value on
-                                        # the wire matches the visible
-                                        # duration.
+                                        # Recompute latency_ms so the
+                                        # value on the wire matches the
+                                        # visible duration (the actual
+                                        # LLM/tool runtime, NOT the
+                                        # pre-step sleep — that's a
+                                        # frontend concern, recorded
+                                        # separately by the front-end
+                                        # if it wants).
                                         new_latency_ms = round(
                                             (time.time() - started) * 1000, 1
                                         )
@@ -488,6 +527,14 @@ def chat_stream(
                                         }
                                         ctx.start_times.pop(step_id, None)
                                         ctx.steps_completed += 1
+                                # Kiki pacing v5: record when this step
+                                # ended so the NEXT step_start can
+                                # compute its front-loaded hold. We
+                                # NO LONGER sleep after step_end — the
+                                # hold has moved to step_start, where
+                                # it can absorb the slow-LLM wait
+                                # instead of stacking on top of it.
+                                ctx.last_step_end_at = time.time()
                             logger.debug(
                                 "[sse] yielding event=%s elapsed=%.2fs",
                                 ev_type,
@@ -523,9 +570,23 @@ def chat_stream(
                                 # front-end can render the "正在判断"
                                 # line immediately, then hold the step
                                 # visible for at least
-                                # _MIN_STEP_DURATION_S (0.6s) so the
+                                # _ROUTER_STEP_HOLD_S (0.7s) so the
                                 # user perceives a real beat of
                                 # "thinking" before it flips to done.
+                                #
+                                # Pacing v5: the router step is the
+                                # FIRST step in the stream, so there's
+                                # no `last_step_end_at` yet — the
+                                # front-loaded hold is meaningless for
+                                # the router itself. We instead apply
+                                # the hold BETWEEN step_start and
+                                # step_end (the classical position) so
+                                # the user always sees a clear
+                                # "正在判断" beat before the route
+                                # decision. For SUBSEQUENT steps the
+                                # hold is computed in the messages
+                                # branch (front-loaded, before
+                                # step_start).
                                 step_id = ctx.next_step_id()
                                 ctx.start_times[step_id] = time.time()
                                 ctx.num_llm += 1
@@ -542,29 +603,24 @@ def chat_stream(
                                         ensure_ascii=False,
                                     ),
                                 }
-                                # Same per-step budget logic as the
-                                # messages branch: hold = min(MIN, budget/
-                                # steps_left), floored at MIN_HOLD_FLOOR
-                                # so the step never vanishes in a single
-                                # frame. The router step is the FIRST
-                                # step in the stream, so budget is
-                                # always at peak and the hold is the
-                                # full MIN_STEP (~1s) — exactly the
-                                # "正在判断" beat the user wants to see.
+                                # The router's own LLM call has
+                                # already happened (synchronously
+                                # during the updates-mode dispatch),
+                                # so this sleep IS the visible "正在
+                                # 判断" beat. Bounded by remaining
+                                # budget so we don't blow past
+                                # _TARGET_TOTAL_S if the stream is
+                                # already long.
                                 stream_elapsed = time.time() - ctx.stream_started_at
-                                remaining_budget = max(
+                                router_budget = max(
                                     0.0, _TARGET_TOTAL_S - stream_elapsed
                                 )
-                                steps_left = max(
-                                    1, _TYPICAL_STEPS - ctx.steps_completed
+                                router_hold = max(
+                                    _ROUTER_STEP_HOLD_S, _MIN_HOLD_FLOOR_S
                                 )
-                                per_step_budget = remaining_budget / steps_left
-                                target_hold = min(
-                                    _MIN_STEP_DURATION_S, per_step_budget
-                                )
-                                target_hold = max(_MIN_HOLD_FLOOR_S, target_hold)
-                                router_hold = max(_ROUTER_STEP_HOLD_S, target_hold)
-                                await asyncio.sleep(router_hold)
+                                router_hold = min(router_hold, router_budget)
+                                if router_hold > 0.01:
+                                    await asyncio.sleep(router_hold)
                                 latency_ms = round(
                                     (time.time() - ctx.start_times.pop(step_id, time.time())) * 1000,
                                     1,
@@ -585,6 +641,16 @@ def chat_stream(
                                 # so the per-step budget tapers correctly
                                 # for the sub-agent steps that follow.
                                 ctx.steps_completed += 1
+                                # Kiki pacing v5: record when this step
+                                # ended so the NEXT step_start can
+                                # compute its front-loaded hold. We no
+                                # longer sleep after step_end — the
+                                # visual gap now lives in the front-
+                                # loaded hold of the NEXT step_start
+                                # (the route event arrives 0ms later,
+                                # so the gap is naturally absorbed by
+                                # the subsequent step's hold).
+                                ctx.last_step_end_at = time.time()
                                 route = payload.get("route") or ""
                                 route_reason = payload.get("route_reason") or ""
                                 subagent_name = payload.get("subagent_name") or ""
@@ -858,6 +924,20 @@ class _StreamCtx:
         # Number of step_end events already emitted this session.
         # Used to estimate steps_left for the per-step budget calc.
         self.steps_completed: int = 0
+        # Kiki-mode pacing v5: timestamp of the most recent step_end
+        # (or stream start if no step has ended yet). Used by the
+        # event_gen loop to "front-load" the per-step hold: instead
+        # of sleeping AFTER step_end (which is invisible — the step
+        # is already done and the user sees the next step snap in),
+        # we sleep BEFORE step_start. That way a slow LLM call
+        # (5s) naturally absorbs the per-step hold — we don't add
+        # any extra sleep before the next step_start because the
+        # LLM has already made us wait long enough. A fast LLM
+        # (50ms) makes us sleep the difference (~0.65s) so the
+        # user still perceives a clear "thinking" beat before the
+        # next step appears. This is what the user asked for as
+        # "把耗时的 LLM 延迟匀到前面的不耗时操作上".
+        self.last_step_end_at: float | None = None
 
     def next_step_id(self) -> str:
         self.counter += 1

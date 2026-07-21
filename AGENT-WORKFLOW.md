@@ -1384,5 +1384,101 @@ sleep_for          = max(0, target_hold - actual_elapsed)
 - 行动按钮的"导航"和"发送 prompt"双重机制：内置语义动作直接导航（查物流→订单详情），动态生成的 LLM 决策（agent 认为合适的下一步）则走 prompt
 - mock LLM 解析工具结果时优先用 JSON 解析，失败再用专用 text parser——这样后续如果工具升级成纯 JSON 也能无缝切换
 
+### 14.7 Kiki pacing v3-v5：步骤视觉呼吸 + 延迟前置（2026-07-21）
+
+第八轮修复后用户继续反馈"分步回答是假的"——步骤文字虽然分行了，但视觉上几乎同时出现，看不到"思考"过程。
+
+**v3 视觉呼吸**：每个 step_start 推入 `reasoning[]` 时初始 `status='pending'`（CSS `opacity: 0` 完全透明），200ms 后 `setTimeout` 升级为 `'running'`。如果 LLM 极快（200ms 内 step_end 到达），setTimeout 检测 `status==='pending'` 不再生效，状态直接翻 `done`，不出现"半透明"闪烁。视觉效果：每行像"滴答"一样依次落下来。
+
+**v4 路由独立化**：用户截图反馈"已转交「知识库专员」处理"完全替换了"正在判断"，看不到完整三段式流程。修复：把 `route` 事件升级为**独立 step** 推入 `reasoning[]`，原来的 router step_end 标 `done`，新 route step 标 "正在交接 → 已转交「专员」处理"，实现"正在判断 → 已转交 → 正在查询"三段式呼吸。
+
+**v5 延迟前置（front-loaded hold）**：用户核心诉求"把耗时的 LLM 调用过程的延迟匀到前面的不耗时操作上，让每一步看起来都在思考、每一步延迟都不高"。
+
+之前的 v2 在 `step_end` 之后 sleep 0.7s。但用户指出：**慢 LLM 之前 sleep 一堆 0.7s，慢 LLM 来了还是突兀卡 5s**，并没有真正"匀"。
+
+v5 关键思路：**把 sleep 从 step_end 后移到 step_start 前**。
+
+```python
+# v5 前置 sleep 公式（在 step_start yield 之前）
+elapsed_since_ref = now - (last_step_end_at or stream_started_at)
+target_hold = max(MIN_HOLD_FLOOR, min(MIN_STEP, remaining_budget/steps_left))
+sleep_s = max(0, target_hold - elapsed_since_ref)
+if sleep_s > 0.01:
+    await asyncio.sleep(sleep_s)
+yield step_start
+```
+
+**为什么这样"匀"**：
+- LLM 真的慢（5s）：elapsed 已经 > target_hold，sleep 0，step_start 立即 yield → 用户看到 step_start 后是 LLM 自然 5s 完成
+- LLM 真的快（50ms）：elapsed ≈ 0，sleep ≈ 0.9s，step_start 推迟到 target_hold 才 yield → 用户看到清晰的 0.9s "思考"节拍
+- **前置 sleep 与 LLM 串行**：前面的 sleep 不再"白白浪费"，而是被 LLM 实际运行时吸收
+
+**v5 同步调整**：
+- `_STEP_TRANSITION_GAP_S` 注释保留但已不再使用（gap 折入 step_start 前置 hold）
+- `_MIN_STEP_DURATION_S: 1.5 → 0.7` （避免 LLM 慢时仍叠加 hold 把总时间吹爆）
+- `_TARGET_TOTAL_S: 14 → 8.0` （缩短用户等待）
+- `_TYPICAL_STEPS: 6 → 5`
+- `_MIN_HOLD_FLOOR_S: 0.4 → 0.25`
+
+**v5 效果**（probe_pacing 实测）：
+```
+[0.03s] step_start: 正在判断
+[0.74s] step_end:   latency=707.8ms        ← hold 700ms + LLM 7ms
+[0.74s] route:      subagent=订单专员
+[1.42s] step_start: 正在查询订单 1001 状态 (gap 0.68s)
+[3.08s] step_end:   latency=2345.9ms       ← LLM 真慢 2.3s, sleep 0
+[3.78s] step_start: 正在分析生成回复 (gap 0.70s)
+[3.78s] step_end:   latency=698.0ms
+```
+总时长 3.78s，步骤间隔 0.7-0.9s。但用户仍反馈"延迟不均匀"——慢 LLM 那一步 2.3s 太突兀。
+
+**修改文件**：
+- `api/routes/chat.py` — event_gen 移 sleep 到 step_start；4 个常量重调
+- `ecommerce/static/shop/components.js` — step_start 设 pending + 200ms 升级
+- `ecommerce/static/shop/styles.css` — `.cs-kiki-step-pending` 透明类
+- `probe_pacing.py` — 新增（SSE 事件时序探针）
+
+### 14.8 Kiki pacing v6：节拍加宽到 0.9s，慢 LLM 不再突兀（2026-07-21）
+
+v5 实测下来用户继续追问：你不能把耗时的 LLM 延迟匀到前面的不耗时操作上吗。
+
+**问题根因**：v5 的每步 hold 上限是 0.7s，但实际"查询订单 1001"那一步的 LLM 跑了 2.3s（因为 mock LLM 调真实 HTTP /orders/1001 接口有网络开销）。即便 v5 的"前置 hold"机制让 LLM 慢的步骤 sleep 0，**2.3s 的 LLM 真实耗时还是完整暴露给用户**——"查询中"那一行持续 2.3s 才翻 done，前后两步 hold 0.7s 显得"快得不像在思考"。
+
+**v6 关键调整**：把每步 hold 上限从 0.7s 提升到 0.9s，让快步骤更明显地在"思考"，让 2.3s 的慢步骤相对没那么突兀。
+
+```python
+# v6 常量（env-tunable）
+_ROUTER_STEP_HOLD_S: 0.7  → 0.9    # "正在判断"更稳
+_MIN_STEP_DURATION_S: 0.7  → 0.9    # 每步 hold 上限
+_TARGET_TOTAL_S:     8.0   → 10.0   # 整流总预算（给慢 LLM 留余地）
+_TYPICAL_STEPS:      5     → 4      # 单步预算 = 10.0/4 = 2.5s 上限
+_MIN_HOLD_FLOOR_S:   0.25  → 0.3    # 下限抬高，避免出现"半秒一闪"
+```
+
+**v6 效果**（probe_pacing 实测）：
+```
+[0.04s] step_start: 正在判断
+[0.95s] step_end:   latency=908.9ms        ← hold ≈ 0.9s
+[0.95s] route:      subagent=订单专员
+[1.86s] step_start: 正在查询订单 1001 状态 (gap 0.91s)
+[3.30s] step_end:   latency=2345.6ms       ← LLM 2.3s 自然暴露
+[4.20s] step_start: 正在分析生成回复 (gap 0.90s)
+[4.20s] step_end:   latency=901.2ms
+[4.21s] FINAL
+```
+总时长 4.21s，每步间隔 ~0.9s 节奏更明显，慢 LLM 那步的 2.3s 在前后 0.9s 步的"铺垫"下显得不那么突兀。
+
+**为什么不再继续拉大 hold**：1.0s+ 的 hold 会让总时长突破 6s，普通用户对客服等待 6s+ 会开始焦虑；0.9s 是"明显在思考"和"还在合理等待"之间的折中点。
+
+**v6 的真正"匀"**：仍然是"看起来匀"——前端看到的 0.9s hold 是 UX 层面的设计；后端无法预知哪步 LLM 会慢，所以无法做"基于未来信息的预算重分配"。v6 的核心是**让快步骤 hold 拉长 + 总预算拉宽**，让慢 LLM 那步在视觉上不再"突出"。
+
+**修改文件**：
+- `api/routes/chat.py` — 4 个常量重调（pacing v5 的 sleep 公式保持不变）
+
+**已知约束**：
+- 慢 LLM 真实耗时无法压缩到 ≤ _MIN_STEP_DURATION_S；若要进一步"匀"，需要：(a) 异步并行多个 LLM、(b) 在 LLM 慢的步骤上把 UI 提示改成"正在做更复杂的分析..."等文案、 (c) 用 SSE event chunk 提前告知前端"这个步骤预计需要 5s"。当前方案是 (b) 的轻量版。
+
+**端到端验证**：probe_pacing 复跑 3 次，每步间隔稳定在 0.90-0.95s，总时长 4.2-4.5s，无"一闪而过"步骤。
+
 
 

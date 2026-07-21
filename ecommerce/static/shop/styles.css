@@ -2203,6 +2203,18 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .cs-kiki-step-done .cs-kiki-step-msg {
   color: var(--color-text-secondary);
 }
+/* Pacing v4: `pending` steps are pushed immediately on step_start
+   but kept invisible for a 200ms visual-breathing delay before
+   being promoted to `running`. Hiding them (vs. not-pushing-yet)
+   preserves the step's position in the array so the order of
+   events matches the order of lines, and avoids the layout jump
+   that would happen if the row were inserted later. The
+   `cs-kiki-step-pending` class is set by the step_start handler
+   in components.js. */
+.cs-kiki-step-pending {
+  opacity: 0;
+  pointer-events: none;
+}
 
 /* Kiki action cards: clickable buttons from [ACTION] blocks */
 .cs-action-cards {

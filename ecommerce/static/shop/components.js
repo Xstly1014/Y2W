@@ -599,43 +599,71 @@
             if (event === 'route') {
               const sub = data.subagent_name || data.route || '';
               const reason = data.route_reason || '';
-              // The router step_start was already pushed (agent_think).
-              // Find the last running step and annotate it.
+              // Pacing v3: the route event is now pushed as its OWN
+              // visible step (not a friendly_message replacement of
+              // the router step). The user wanted to see
+              //   1. 正在判断... (router thinking)
+              //   2. 已转交「订单专员」处理 (route decision)
+              //   3. 正在查询订单 1001 状态... (sub-agent work)
+              // as three distinct lines, with a readable beat
+              // between them — not one merged flash. The router
+              // step is marked 'done' here so the user sees its
+              // completion; the new route step is a separate
+              // visual moment.
               const last = aiMsg.reasoning[aiMsg.reasoning.length - 1];
               if (last && last.status === 'running' && last.step_type === 'agent_think') {
-                last.route_info = {
-                  route: data.route,
-                  route_reason: reason,
-                  subagent_name: sub,
-                };
-                if (sub) {
-                  last.friendly_message = `已转交「${subAgentLabel(sub)}」处理`;
-                } else if (reason) {
-                  last.friendly_message = reason;
-                }
-              } else {
-                // No router step pushed yet (edge case) — push one.
-                aiMsg.reasoning.push({
-                  step_id: 'route-' + Date.now(),
-                  step_type: 'agent_think',
-                  friendly_message: sub ? `已转交「${subAgentLabel(sub)}」处理` : reason || '路由决策',
-                  status: 'done',
-                  latency_ms: null,
-                  route_info: { route: data.route, route_reason: reason, subagent_name: sub },
-                });
+                // Mark the router step done; the route decision gets
+                // its own step below.
+                last.status = 'done';
               }
+              // Always push a new step for the route decision so
+              // it's visually distinct from the router thinking.
+              aiMsg.reasoning.push({
+                step_id: 'route-' + Date.now(),
+                step_type: 'route_decision',
+                friendly_message: sub
+                  ? `已转交「${subAgentLabel(sub)}」处理`
+                  : (reason || '路由决策'),
+                status: 'done',
+                latency_ms: null,
+                route_info: { route: data.route, route_reason: reason, subagent_name: sub },
+              });
+              nextTickScroll();
               return;
             }
             if (event === 'step_start') {
+              // Pacing v4: push the step immediately with `pending`
+              // status (visually hidden via CSS), then promote it to
+              // `running` after a 200ms visual-breathing delay. This
+              // makes each new step feel like a distinct "drop" rather
+              // than appearing in the same frame as the previous
+              // step's `done` state. The user asked for "每一步都在
+              // 思考 每一步延迟都不高" — the 200ms gap is the
+              // "thinking" beat between steps, so the eye can latch
+              // onto each new line individually.
+              //
+              // If `step_end` arrives within the 200ms (fast LLM), it
+              // flips the step straight to `done` and the setTimeout
+              // no-ops because status !== 'pending'. So fast steps
+              // still surface (just briefly), and slow steps show the
+              // proper `running → done` transition.
+              const stepId = data.step_id;
               aiMsg.reasoning.push({
-                step_id: data.step_id,
+                step_id: stepId,
                 step_type: data.step_type || 'step',
                 friendly_message: data.friendly_message || friendlyForStepType(data.step_type),
-                status: 'running',
+                status: 'pending',
                 latency_ms: null,
                 preview: null,
                 tool_name: data.tool_name || null,
               });
+              setTimeout(() => {
+                const st = aiMsg.reasoning.find((s) => s.step_id === stepId);
+                if (st && st.status === 'pending') {
+                  st.status = 'running';
+                  nextTickScroll();
+                }
+              }, 200);
               nextTickScroll();
               return;
             }
