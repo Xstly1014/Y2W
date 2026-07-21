@@ -153,13 +153,13 @@ def main() -> int:
 
     print("\n" + "=" * 60)
     print("  0719agent Commerce Platform is up:")
-    print("    - Web UI (Agent chat):   http://127.0.0.1:8000/")
+    print("    - Agent API:              http://127.0.0.1:8000/api/health (no HTML page)")
     print("    - API docs (Swagger):     http://127.0.0.1:8000/docs")
     print("    - Mock platform:          http://127.0.0.1:8001/health")
     if skip_ecommerce:
         print("    - E-commerce:             SKIPPED (ECOMMERCE_SKIP=1)")
     else:
-        print("    - E-commerce platform:    http://127.0.0.1:8002/shop")
+        print("    - E-commerce platform:    http://127.0.0.1:8002/shop  ← user-facing UI")
         print("    - E-commerce API docs:    http://127.0.0.1:8002/docs")
     print("    - Run end-to-end demo:    python scripts/demo.py")
     print("=" * 60 + "\n")

@@ -1,7 +1,12 @@
 """FastAPI server entry point.
 
-Wires all routers, serves the static front-end at /, and exposes
-`/docs` (Swagger) for quick manual testing.
+Wires all routers and exposes the JSON API. The user-facing UI lives
+exclusively in the standalone e-commerce service on port 8002
+(`ecommerce/static/shop/index.html`); the agent backend on this
+port (8000) is now API-only — there is no static page to delete,
+so a GET / returns 404. The web mall's customer-service widget
+calls this server's `/api/chat/stream` (proxied through the
+e-commerce service's `/customer-service/chat/stream`).
 
 Run:
     python -m api.server
@@ -10,12 +15,9 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from api.deps import get_agent_for_tenant
 from api.routes import chat, kb, metrics, ops
@@ -119,26 +121,14 @@ app.include_router(ops.dashboard_router)
 app.include_router(metrics.metrics_router)
 
 
-# --------------------------------------------------------------------------- #
-# Static front-end (single-page demo UI)
-# --------------------------------------------------------------------------- #
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-# Avatars are served at /avatars/... if the directory exists.
-avatars_dir = STATIC_DIR / "avatars"
-if avatars_dir.exists():
-    app.mount("/avatars", StaticFiles(directory=avatars_dir), name="avatars")
-
-
-@app.get("/")
-def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
-
-
-@app.get("/admin")
-def admin_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "admin.html")
+# Note: this server used to mount `static/index.html` at `/` and
+# `static/admin.html` at `/admin`. The user-facing UI is now served
+# exclusively by the e-commerce service (port 8002 → /shop), so the
+# standalone agent page on port 8000 was removed. The API endpoints
+# under `/api/*` still work — the web mall's customer-service widget
+# calls `/api/chat/stream` via the proxy at
+# `ecommerce/routes/customer_service.py`. See AGENT-WORKFLOW.md
+# §14.7 "第九轮" for the rationale.
 
 
 def main() -> None:
